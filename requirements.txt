@@ -1,0 +1,6 @@
+langchain>=1.0
+langchain-anthropic>=1.0
+langgraph>=1.0
+pandas>=2.0
+python-dotenv>=1.0
+pytest>=8.0
