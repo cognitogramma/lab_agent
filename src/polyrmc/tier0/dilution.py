@@ -42,6 +42,35 @@ def dilution_time_constant(config: DilutionConfig) -> float:
     return config.cell_volume_cm3 / config.flow_rate_cm3_per_s
 
 
+def plateau_swing(signal: np.ndarray, fraction: float = 0.5, n_bins: int = 10) -> float:
+    """How much the trace still swings over its final ``fraction`` of the run.
+
+    Returned as the peak-to-peak range of binned medians divided by their
+    median, so 0 means a flat plateau and 1 means the trace still moves by its
+    own magnitude.
+
+    This exists because an endpoint summary is only meaningful if the trace
+    settled. A run dominated by sporadic large aggregates drifting through the
+    scattering volume never plateaus -- its final value depends on where the
+    acquisition happened to stop, and quoting it as Mw/M0 states far more
+    confidence than the data supports.
+    """
+    finite = signal[np.isfinite(signal)]
+    if finite.size < n_bins * 2:
+        return 0.0
+
+    tail = finite[int(finite.size * (1.0 - fraction)) :]
+    if tail.size < n_bins * 2:
+        return 0.0
+
+    bins = np.array_split(tail, n_bins)
+    levels = np.array([np.median(b) for b in bins if b.size])
+    centre = float(np.median(levels))
+    if centre == 0:
+        return float("inf")
+    return float((levels.max() - levels.min()) / abs(centre))
+
+
 def aggregation_index(signal: np.ndarray, reference_points: int = 50) -> np.ndarray:
     """Mw/M0: scattering normalized to its own initial value.
 

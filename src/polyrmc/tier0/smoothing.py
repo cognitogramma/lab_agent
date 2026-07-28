@@ -337,6 +337,13 @@ def propose_windows(
         reference_window=config.landmark_reference_window,
         exclude=exclude,
     )
+    # Landmark amplitudes are compared against a lightly smoothed reference,
+    # not the raw trace. Measuring against raw charges every window for the
+    # noise it was supposed to remove, and on real traces nothing then passes.
+    # The cost is a known bias: a window equal to the reference scores zero
+    # attenuation by construction, so it is favoured, and on noisy traces the
+    # candidate set can collapse to that single window -- which leaves a judge
+    # nothing to decide. Widening this is the main open issue in tier 1.
     reference = reference_trace(
         signal, config.landmark_reference_window, config.polyorder
     )

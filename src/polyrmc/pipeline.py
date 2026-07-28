@@ -23,7 +23,7 @@ from polyrmc.tier0 import optics
 from polyrmc.tier0.argen_io import load_argen_file
 from polyrmc.tier0.classify import classify_all
 from polyrmc.tier0.detect import detect_anomalies, noise_floor
-from polyrmc.tier0.dilution import aggregation_index, concentration_at
+from polyrmc.tier0.dilution import aggregation_index, concentration_at, plateau_swing
 from polyrmc.tier0.fit_range import apply_fit_range, sorted_finite
 from polyrmc.tier0.smoothing import savgol_smooth
 from polyrmc.tier0.splice import apply_splice
@@ -143,6 +143,27 @@ def run_part1(
                 f"{reference / excess_noise:.1f}x the noise level: Mw/M0 on this "
                 "channel is dominated by the blank subtraction and should not be "
                 "trusted"
+            )
+
+        blank_fraction = (
+            config.solvent_blank_counts / (reference + config.solvent_blank_counts)
+            if reference + config.solvent_blank_counts > 0
+            else 1.0
+        )
+        if blank_fraction > 0.5:
+            state.warnings.append(
+                f"the blank is {100 * blank_fraction:.0f}% of the raw signal at run "
+                "start, so Mw/M0 rests on a small difference between two similar "
+                "numbers and is highly sensitive to the blank value"
+            )
+
+        swing = plateau_swing(excess)
+        if swing > 0.5:
+            state.warnings.append(
+                f"the trace does not plateau: it still swings by {100 * swing:.0f}% "
+                "of its own level over the second half of the run. An endpoint "
+                "Mw/M0 is not a meaningful summary of a trace like this -- the "
+                "value depends on where acquisition happened to stop"
             )
     except ValueError as error:
         state.warnings.append(f"Mw/M0 not computed: {error}")
