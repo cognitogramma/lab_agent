@@ -22,7 +22,7 @@ from polyrmc.tier0 import baseline as baseline_module
 from polyrmc.tier0 import optics
 from polyrmc.tier0.argen_io import load_argen_file
 from polyrmc.tier0.classify import classify_all
-from polyrmc.tier0.detect import detect_anomalies
+from polyrmc.tier0.detect import detect_anomalies, noise_floor
 from polyrmc.tier0.dilution import aggregation_index, concentration_at
 from polyrmc.tier0.fit_range import apply_fit_range, sorted_finite
 from polyrmc.tier0.smoothing import savgol_smooth
@@ -44,17 +44,12 @@ def run_part1(
     Parameters
     ----------
     channel:
-        Scattering channel to process. Defaults to the first one found; the
-        instrument runs 16 independent cells, so a full session calls this once
-        per channel.
+        Scattering channel to process. Defaults to ``config.channel``, which is
+        ``ls8`` -- the only channel this lab analyses. The other 15 are dropped
+        at load and never reach any stage of the pipeline.
     """
-    argen = load_argen_file(config.source_file)
-    channel = channel or argen.scattering_columns[0]
-    if channel not in argen.scattering_columns:
-        raise ValueError(
-            f"{channel!r} is not a scattering channel; available: "
-            f"{argen.scattering_columns}"
-        )
+    channel = channel or config.channel
+    argen = load_argen_file(config.source_file, channel=channel)
 
     state = RunState(run_id=config.run_id, source_file=str(config.source_file))
     state.time_s = argen.time_s
@@ -97,12 +92,20 @@ def run_part1(
         state.baseline = np.zeros_like(state.spliced_signal)
         state.corrected_signal = state.spliced_signal
 
+    # Regions the detectors flagged -- including ones classification could not
+    # name -- are excluded from landmark detection. They are already suspect,
+    # so they are not features smoothing is obliged to preserve.
+    suspect = np.zeros(state.raw_signal.size, dtype=bool)
+    for record in state.anomalies:
+        suspect[record.start_index : record.end_index + 1] = True
+
     window_loop = select_smoothing_window(
         state.corrected_signal,
         smoothing_config=config.smoothing,
         loop_config=config.loop,
         judge=judge,
         context={"channel": channel, "run_id": config.run_id},
+        exclude=suspect,
     )
     state.loops["smoothing_window"] = window_loop
     if window_loop.resolved_value is None:
@@ -128,8 +131,21 @@ def run_part1(
         )
 
     try:
-        mw_over_m0 = aggregation_index(state.smoothed_signal)
-    except ValueError:
+        # Computed on the excess, not the total. Solvent scattering is a
+        # constant that does not aggregate, so leaving it in drags the ratio
+        # toward 1 -- about 10% on a real liraglutide run with its own blank.
+        mw_over_m0 = aggregation_index(excess)
+        reference = float(np.nanmedian(excess[np.isfinite(excess)][:50]))
+        excess_noise = noise_floor(excess)
+        if excess_noise > 0 and reference < 10.0 * excess_noise:
+            state.warnings.append(
+                f"excess scattering at run start ({reference:.6g}) is only "
+                f"{reference / excess_noise:.1f}x the noise level: Mw/M0 on this "
+                "channel is dominated by the blank subtraction and should not be "
+                "trusted"
+            )
+    except ValueError as error:
+        state.warnings.append(f"Mw/M0 not computed: {error}")
         mw_over_m0 = np.full_like(state.time_s, np.nan)
 
     output_csv = Path(output_csv) if output_csv else _default_output(config, channel)

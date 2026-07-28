@@ -138,6 +138,10 @@ class RunConfig(BaseModel):
     # number wrong in a way that looks entirely normal.
     experiment_type: Literal["dilution_trajectory", "fixed_concentration"]
 
+    # The instrument writes ls1..ls16; only ls8 is the measurement. The others
+    # are dropped at load and never reach any analysis stage.
+    channel: str = Field("ls8", description="Scattering channel to analyse.")
+
     optical: OpticalConfig
     dilution: DilutionConfig | None = None
     smoothing: SmoothingConfig = Field(default_factory=SmoothingConfig)

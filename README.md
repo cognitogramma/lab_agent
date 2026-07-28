@@ -45,7 +45,8 @@ src/polyrmc/
   pipeline.py     run_part1 (clean) and run_part2 (extract)
   cli.py          command-line entry point
 
-  tier0/  argen_io    dynamic header, time reconstruction, scoped nulls
+  tier0/  argen_io    dynamic header, time reconstruction, scoped nulls,
+                      ls8-only channel selection
           detect      derivative/Hampel/saturation/variance detectors, PELT
           classify    deterministic anomaly typing; escalates ambiguous cases
           splice      excision without re-indexing
@@ -88,6 +89,14 @@ requires `ANTHROPIC_API_KEY`.
 ```
 
 139 tests, no API key or instrument file required.
+
+## The scattering channel
+
+The instrument writes `ls1`…`ls16`. **Only `ls8` is the measurement**, and it is
+the only one this pipeline analyses. The others are dropped at load, so no later
+stage can read one by accident, and null handling keys on `ls8` alone — a bad
+`ls3` reading never discards a row whose `ls8` value is fine. `RunConfig.channel`
+carries the choice and it is recorded in the output CSV and the sidecar.
 
 ## What alpha does and does not affect
 

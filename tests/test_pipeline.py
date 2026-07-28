@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from polyrmc.config import FitRangeConfig, LoopConfig, RunConfig, SmoothingConfig
+from polyrmc.io_csv import read_processed_csv
 from polyrmc.pipeline import new_run_id, run_part1, run_part2
 from polyrmc.provenance import load_sidecar, replay_decisions, sidecar_path
 from polyrmc.tier1.judge import RecordedJudge, StaticJudge
@@ -138,7 +139,19 @@ def test_part2_refuses_a_file_with_no_concentration_axis(run_config, tmp_path):
 
 def test_unknown_channel_is_refused(run_config, tmp_path):
     with pytest.raises(ValueError, match="is not a scattering channel"):
-        run_part1(run_config, channel="Cell_99", judge=StaticJudge())
+        run_part1(run_config, channel="ls99", judge=StaticJudge())
+
+
+def test_ls8_is_the_default_channel(run_config, tmp_path):
+    """No channel argument means ls8; nothing else is ever analysed."""
+    assert run_config.channel == "ls8"
+
+    _state, csv_path = run_part1(
+        run_config, judge=StaticJudge(), output_csv=tmp_path / "default.csv"
+    )
+    _frame, metadata = read_processed_csv(csv_path)
+
+    assert metadata["channel"] == "ls8"
 
 
 def test_orchestrator_refuses_to_run_without_a_confirmed_experiment_type(run_config):

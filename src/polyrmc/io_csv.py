@@ -54,9 +54,10 @@ def write_processed_csv(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     metadata_lines = [f"# {key}: {value}" for key, value in (metadata or {}).items()]
-    # +1 for the declaration line itself, +1 for the column-name row that
-    # pandas writes; skiprows must land exactly on the header row.
-    n_header = len(metadata_lines) + 1
+    # Declared count includes the column-name row, matching the convention the
+    # instrument uses -- the declaration line, the metadata block, and the
+    # column row that pandas writes.
+    n_header = len(metadata_lines) + 2
 
     frame = pd.DataFrame({name: columns[name] for name in COLUMNS})
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -83,14 +84,15 @@ def read_processed_csv(path: str | Path) -> tuple[pd.DataFrame, dict[str, str]]:
             "by write_processed_csv"
         )
 
+    column_row_index = n_header - 1
     metadata: dict[str, str] = {}
-    for line in preamble[1:n_header]:
+    for line in preamble[1:column_row_index]:
         stripped = line.strip().lstrip("#").strip()
         if ":" in stripped:
             key, _, value = stripped.partition(":")
             metadata[key.strip()] = value.strip()
 
-    frame = pd.read_csv(path, skiprows=n_header)
+    frame = pd.read_csv(path, skiprows=column_row_index)
     unexpected = [name for name in COLUMNS if name not in frame.columns]
     if unexpected:
         raise ValueError(f"processed CSV is missing columns: {unexpected}")

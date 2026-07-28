@@ -37,6 +37,17 @@ HEADER_COUNT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"data\s+(?:starts|begins)\s+(?:at\s+)?(?:row|line)\s*[:=,\t]\s*(\d+)", re.I),
 )
 
+# The declared count *includes* the column-name row: an ARGEN file that says
+# "Header Rows: 10" carries nine metadata lines and puts the column names on
+# line ten, with data from line eleven. Reading it as nine-rows-then-header
+# silently promotes the first data row to the header instead.
+COLUMN_ROW_IS_LAST_HEADER_ROW = True
+
+# The lab analyses this channel and no other. The instrument writes ls1..ls16,
+# but only ls8 is the measurement; the rest are never used. They are dropped at
+# load so nothing downstream can reach them by accident.
+DEFAULT_CHANNEL = "ls8"
+
 _NULL_TOKENS = {"", "nan", "na", "n/a", "null", "none", "-", "--", "#n/a"}
 
 # Time tokens: "MM:SS(.s)" wraps hourly; "HH:MM:SS(.s)" is absolute.
@@ -54,6 +65,9 @@ class ArgenFile:
     time_s: np.ndarray
     time_format: TimeFormat
     scattering_columns: list[str] = field(default_factory=list)
+    """The channel(s) actually analysed -- ls8 alone by default."""
+    available_channels: list[str] = field(default_factory=list)
+    """Every scattering column the file contained, recorded but not analysed."""
     dropped_rows: list[int] = field(default_factory=list)
 
     @property
@@ -180,12 +194,23 @@ def reconstruct_time(tokens: list[str], time_format: TimeFormat) -> np.ndarray:
     return values
 
 
+def detect_delimiter(header_line: str) -> str:
+    """Pick the delimiter from the column-name row by counting candidates."""
+    counts = {sep: header_line.count(sep) for sep in (",", "\t", ";")}
+    best = max(counts, key=lambda sep: counts[sep])
+    if counts[best] == 0:
+        raise ValueError(f"no recognised delimiter in column row: {header_line[:80]!r}")
+    return best
+
+
 def identify_scattering_columns(
-    columns: list[str], expected: int = 16, pattern: str = r"(cell|ch(?:an(?:nel)?)?|det)\s*_?\d+"
+    columns: list[str],
+    expected: int = 16,
+    pattern: str = r"^(?:ls|cell|ch(?:an(?:nel)?)?|det)\s*_?\d+$",
 ) -> list[str]:
     """Find the scattering-channel columns among the data columns."""
     regex = re.compile(pattern, re.I)
-    found = [column for column in columns if regex.search(column)]
+    found = [column for column in columns if regex.match(column.strip())]
     if not found:
         raise ValueError(
             f"no scattering channels matched {pattern!r} in columns {columns[:12]}..."
@@ -210,10 +235,11 @@ def scoped_null_mask(frame: pd.DataFrame, scattering_columns: list[str]) -> np.n
 def load_argen_file(
     path: str | Path,
     *,
-    sep: str = "\t",
+    channel: str | None = DEFAULT_CHANNEL,
+    sep: str | None = None,
     time_column: str | None = None,
     expected_channels: int = 16,
-    channel_pattern: str = r"(cell|ch(?:an(?:nel)?)?|det)\s*_?\d+",
+    channel_pattern: str = r"^(?:ls|cell|ch(?:an(?:nel)?)?|det)\s*_?\d+$",
     encoding: str = "utf-8",
 ) -> ArgenFile:
     """Load an ARGEN acquisition into a validated :class:`ArgenFile`.
@@ -222,12 +248,18 @@ def load_argen_file(
     ----------
     path:
         Raw instrument file.
+    channel:
+        The scattering channel to analyse. Defaults to ``ls8``, the only one
+        this lab uses. Every other scattering column is dropped from the
+        returned frame, so no later stage can read one by accident. Pass
+        ``None`` to keep them all -- only useful for inspecting a raw file.
     sep:
-        Column delimiter; ARGEN exports are tab-delimited by default.
+        Column delimiter. Auto-detected from the column-name row when omitted.
     time_column:
         Elapsed-time column name. Auto-detected when omitted.
     expected_channels:
-        Instrument default is 16 independent cells.
+        How many scattering columns the file should contain. Used to check the
+        file's shape; it does not widen what gets analysed.
 
     Raises
     ------
@@ -247,12 +279,23 @@ def load_argen_file(
             "HEADER_COUNT_PATTERNS rather than hard-coding a row count."
         )
 
-    metadata = parse_header_metadata(preamble[:n_header_rows], sep=sep)
+    # The declared count includes the column-name row, so the metadata block is
+    # everything above it and the data starts one line further down.
+    column_row_index = n_header_rows - 1 if COLUMN_ROW_IS_LAST_HEADER_ROW else n_header_rows
+    if column_row_index < 0 or column_row_index >= len(preamble):
+        raise ValueError(
+            f"{path.name} declares {n_header_rows} header rows, which does not fit "
+            "the file"
+        )
+
+    if sep is None:
+        sep = detect_delimiter(preamble[column_row_index])
+    metadata = parse_header_metadata(preamble[:column_row_index], sep=sep)
 
     frame = pd.read_csv(
         path,
         sep=sep,
-        skiprows=n_header_rows,
+        skiprows=column_row_index,
         encoding=encoding,
         engine="python",
         na_values=sorted(_NULL_TOKENS - {""}),
@@ -265,9 +308,23 @@ def load_argen_file(
             raise ValueError(f"no time-like column in {list(frame.columns)[:12]}...")
         time_column = candidates[0]
 
-    scattering_columns = identify_scattering_columns(
+    available_channels = identify_scattering_columns(
         list(frame.columns), expected=expected_channels, pattern=channel_pattern
     )
+
+    if channel is None:
+        scattering_columns = available_channels
+    else:
+        if channel not in available_channels:
+            raise ValueError(
+                f"{channel!r} is not a scattering channel in {path.name}; "
+                f"available: {available_channels}"
+            )
+        scattering_columns = [channel]
+        # Drop the unused channels outright. Null handling, detection, and
+        # every later stage then key on ls8 alone -- a null in ls3 must not
+        # discard a row whose ls8 reading is perfectly good.
+        frame = frame.drop(columns=[c for c in available_channels if c != channel])
 
     drop_mask = scoped_null_mask(frame, scattering_columns)
     dropped_rows = np.flatnonzero(drop_mask).tolist()
@@ -285,5 +342,6 @@ def load_argen_file(
         time_s=time_s,
         time_format=time_format,
         scattering_columns=scattering_columns,
+        available_channels=available_channels,
         dropped_rows=dropped_rows,
     )

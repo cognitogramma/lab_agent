@@ -96,6 +96,7 @@ def write_argen_file(
     dt: float = 1.0,
     n_channels: int = 16,
     seed: int = 7,
+    null_channel_index: int = 7,  # ls8 -- the analysed channel
     null_channel_rows: tuple[int, ...] = (10, 11),
     null_temp_rows: tuple[int, ...] = (20, 21, 22),
 ) -> Path:
@@ -111,14 +112,15 @@ def write_argen_file(
         for _ in range(n_channels)
     ]
 
+    # Declared count includes the column-name row, as the instrument does.
     header = [
-        "# Number of header rows: 4",
+        "# Number of header rows: 5",
         "# Instrument: ARGEN (synthetic)",
         "# Sample: test fixture",
         "# Note: elapsed time wraps hourly",
     ]
     column_names = ["Elapsed Time", "Temperature", "Stir Speed", "ND Filter"] + [
-        f"Cell_{i + 1}" for i in range(n_channels)
+        f"ls{i + 1}" for i in range(n_channels)
     ]
 
     lines = list(header)
@@ -132,7 +134,7 @@ def write_argen_file(
             "1.0",
         ]
         for index, channel in enumerate(channels):
-            if index == 0 and row in null_channel_rows:
+            if index == null_channel_index and row in null_channel_rows:
                 values.append("")
             else:
                 values.append(f"{channel[row]:.3f}")
@@ -170,11 +172,11 @@ def write_virial_argen_file(
     base = ideal_intensity(concentration, k, alpha=alpha)
 
     lines = [
-        "# Number of header rows: 3",
+        "# Number of header rows: 4",
         "# Instrument: ARGEN (synthetic virial)",
         "# Sample: known A2 and Mw",
     ]
-    column_names = ["Elapsed Time", "Temperature"] + [f"Cell_{i + 1}" for i in range(16)]
+    column_names = ["Elapsed Time", "Temperature"] + [f"ls{i + 1}" for i in range(16)]
     lines.append("\t".join(column_names))
 
     channels = [base * (1.0 + generator.normal(0, 3e-4, n_points)) for _ in range(16)]

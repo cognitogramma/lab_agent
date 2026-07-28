@@ -54,6 +54,15 @@ def aggregation_index(signal: np.ndarray, reference_points: int = 50) -> np.ndar
     if finite.size == 0:
         raise ValueError("signal has no finite samples")
     reference = float(np.nanmedian(finite[: min(reference_points, finite.size)]))
-    if reference == 0:
-        raise ValueError("initial scattering level is zero; cannot normalize")
+    if reference <= 0:
+        # A non-positive reference means the blank equals or exceeds the sample
+        # at this channel, so there is no solute signal to normalise against.
+        # Dividing anyway yields a large negative ratio that looks like a
+        # number and means nothing -- on a real run the dim channels produced
+        # Mw/M0 of -4 and -24 this way.
+        raise ValueError(
+            f"reference excess scattering is {reference:.6g}, not positive: the "
+            "blank meets or exceeds the sample on this channel, so Mw/M0 is "
+            "undefined"
+        )
     return signal / reference

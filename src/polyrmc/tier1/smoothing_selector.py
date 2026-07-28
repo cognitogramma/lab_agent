@@ -40,13 +40,19 @@ def conservative_window_candidate(candidates: list[Candidate]) -> Candidate:
 class _WindowProposer:
     """Deterministic window proposer that honors a direction hint."""
 
-    def __init__(self, signal: np.ndarray, config: SmoothingConfig) -> None:
+    def __init__(
+        self,
+        signal: np.ndarray,
+        config: SmoothingConfig,
+        exclude: np.ndarray | None = None,
+    ) -> None:
         self.signal = signal
         self.config = config
+        self.exclude = exclude
         self.last: list[Candidate] = []
 
     def __call__(self, hint: str | None) -> list[Candidate]:
-        candidates = propose_windows(self.signal, self.config)
+        candidates = propose_windows(self.signal, self.config, exclude=self.exclude)
         if hint and self.last:
             lowered = hint.lower()
             pivot = float(np.median([c.features["window"] for c in self.last]))
@@ -67,6 +73,7 @@ def select_smoothing_window(
     loop_config: LoopConfig | None = None,
     judge: Judge | None = None,
     context: dict[str, Any] | None = None,
+    exclude: np.ndarray | None = None,
 ) -> LoopState:
     """Run the bounded loop that chooses the smoothing window.
 
@@ -87,7 +94,7 @@ def select_smoothing_window(
 
     return run_bounded_loop(
         name="smoothing_window",
-        propose=_WindowProposer(signal, smoothing_config),
+        propose=_WindowProposer(signal, smoothing_config, exclude=exclude),
         judge=judge or StaticJudge(rationale="no judge supplied; conservative default"),
         fallback=conservative_window_candidate,
         config=loop_config,

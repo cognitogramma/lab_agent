@@ -2,6 +2,7 @@
   "run_id": "example-001",
   "source_file": "data/raw/example_argen.txt",
   "experiment_type": "dilution_trajectory",
+  "channel": "ls8",
 
   "optical": {
     "wavelength_nm": 660.0,

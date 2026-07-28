@@ -90,6 +90,7 @@ def find_landmarks(
     context: int = 20,
     min_landmark_width: float = 5.0,
     reference_window: int = 11,
+    exclude: np.ndarray | None = None,
 ) -> tuple[np.ndarray, list[int]]:
     """Locate the kinetic features smoothing must not erase.
 
@@ -116,7 +117,13 @@ def find_landmarks(
         return np.array([], dtype=int), []
     finite = reference_trace(signal, reference_window)
 
-    sigma = noise_floor(finite)
+    # The noise scale must come from the RAW trace. Estimating it from the
+    # pre-smoothed reference understates it badly -- smoothing is precisely
+    # what removes the point-to-point variation that noise_floor measures --
+    # which collapses the prominence threshold and turns thousands of noise
+    # wiggles into "landmarks". On a real 79k-point trace that produced 5475
+    # extrema and made every candidate window look destructive.
+    sigma = noise_floor(_fill(signal))
     prominence = prominence_sigmas * sigma if sigma > 0 else None
 
     # A minimum width is what separates a kinetic feature from a noise spike.
@@ -139,6 +146,18 @@ def find_landmarks(
         for point in pelt_changepoints(finite)
         if 0 <= point < profile.size and profile[point] > threshold
     ]
+
+    if exclude is not None and exclude.any():
+        # A region the detectors flagged is not a kinetic feature the filter is
+        # obliged to preserve -- we already suspect it. Without this, an
+        # unclassified region that splicing conservatively left in place goes
+        # on to veto every smoothing window, so being careful at one stage
+        # makes the next stage impossible.
+        extrema = np.array(
+            [index for index in extrema if not exclude[index]], dtype=int
+        )
+        abrupt = [point for point in abrupt if not exclude[point]]
+
     return extrema, abrupt
 
 
@@ -301,7 +320,9 @@ def conservative_window(n_points: int, config: SmoothingConfig) -> int:
 
 
 def propose_windows(
-    signal: np.ndarray, config: SmoothingConfig | None = None
+    signal: np.ndarray,
+    config: SmoothingConfig | None = None,
+    exclude: np.ndarray | None = None,
 ) -> list[Candidate]:
     """Generate smoothing windows that are safe by construction.
 
@@ -312,7 +333,9 @@ def propose_windows(
     """
     config = config or SmoothingConfig()
     extrema, change_points = find_landmarks(
-        signal, reference_window=config.landmark_reference_window
+        signal,
+        reference_window=config.landmark_reference_window,
+        exclude=exclude,
     )
     reference = reference_trace(
         signal, config.landmark_reference_window, config.polyorder
