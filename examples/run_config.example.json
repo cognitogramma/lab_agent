@@ -1,0 +1,41 @@
+{
+  "run_id": "example-001",
+  "source_file": "data/raw/example_argen.txt",
+  "experiment_type": "dilution_trajectory",
+
+  "optical": {
+    "wavelength_nm": 660.0,
+    "angle_deg": 90.0,
+    "solvent_refractive_index": 1.333,
+    "dn_dc": 0.185,
+    "alpha": null
+  },
+
+  "dilution": {
+    "c0_g_per_cm3": 0.004,
+    "flow_rate_cm3_per_s": 0.001,
+    "cell_volume_cm3": 1.0
+  },
+
+  "smoothing": {
+    "polyorder": 2,
+    "min_window": 5,
+    "max_window": 301,
+    "n_candidates": 12
+  },
+
+  "fit_range": {
+    "min_points": 20,
+    "n_candidates": 10,
+    "min_r_squared": 0.95
+  },
+
+  "loop": {
+    "max_iterations": 3,
+    "model": "claude-opus-4-8",
+    "replay": false
+  },
+
+  "solvent_blank_counts": 0.0,
+  "k_h": 0.0
+}

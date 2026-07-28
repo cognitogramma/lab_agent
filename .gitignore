@@ -4,3 +4,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+*.egg-info/
+build/
+dist/
+
+# Instrument files and processed output are data, not source.
+data/raw/*
+!data/raw/.gitkeep
+data/runs/*
+!data/runs/.gitkeep

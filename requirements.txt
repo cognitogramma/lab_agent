@@ -1,6 +1,15 @@
+# Tier 0 -- the measurement layer. These are the only packages the science
+# depends on, and none of them talk to a model provider.
+numpy>=2.0
+scipy>=1.14
+pandas>=2.0
+pydantic>=2.0
+
+# Tier 1/2 -- judges and orchestration only. The pipeline runs end to end
+# without these, using the deterministic StaticJudge.
 langchain>=1.0
 langchain-anthropic>=1.0
 langgraph>=1.0
-pandas>=2.0
 python-dotenv>=1.0
+
 pytest>=8.0
