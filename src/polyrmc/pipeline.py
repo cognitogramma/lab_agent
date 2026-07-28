@@ -9,6 +9,7 @@ The CSV is the only thing that passes between them.
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -20,7 +21,11 @@ from polyrmc.provenance import write_sidecar
 from polyrmc.state import AnomalyType, DerivedParameters, RunState
 from polyrmc.tier0 import baseline as baseline_module
 from polyrmc.tier0 import optics
-from polyrmc.tier0.argen_io import load_argen_file
+from polyrmc.tier0.argen_io import (
+    at_full_scale,
+    gain_change_indices,
+    load_argen_file,
+)
 from polyrmc.tier0.classify import classify_all
 from polyrmc.tier0.detect import detect_anomalies, noise_floor
 from polyrmc.tier0.dilution import aggregation_index, concentration_at, plateau_swing
@@ -61,6 +66,32 @@ def run_part1(
     if not argen.is_uniformly_sampled:
         state.warnings.append(
             "sampling is non-uniform; time, not row index, is the x-axis"
+        )
+
+    # The ND filter rescales the beam. If it moves mid-run, readings either
+    # side of the change are on different scales and cannot be compared.
+    nd_column = next(
+        (c for c in argen.data.columns if re.fullmatch(r"nd\s*_?filter", c, re.I)), None
+    )
+    state.nd_filter_changes = (
+        gain_change_indices(argen.data[nd_column].to_numpy()) if nd_column else []
+    )
+    if state.nd_filter_changes:
+        state.warnings.append(
+            f"ND filter changes {len(state.nd_filter_changes)} time(s) during this "
+            f"run (first at sample {state.nd_filter_changes[0]}). The scattering "
+            "channel is rescaled by an amount the file does not record, so readings "
+            "either side are NOT on the same scale. Mw/M0 spanning the change is "
+            "not a physical quantity; restrict the analysis to one filter segment "
+            "or supply the filter transmission."
+        )
+
+    railed = at_full_scale(state.raw_signal)
+    if railed.any():
+        state.warnings.append(
+            f"{int(railed.sum())} sample(s) sit exactly at the detector's full-scale "
+            "reading of 1.0: the instrument ran out of range and those points are "
+            "limits, not measurements"
         )
 
     records, _change_points = detect_anomalies(

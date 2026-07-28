@@ -32,6 +32,7 @@ from polyrmc.tier0.argen_io import (
     load_argen_file,
     parse_header_metadata,
 )
+from polyrmc.plotting import plot_run, plot_session
 from polyrmc.tier0.dilution import plateau_swing
 from polyrmc.tier1.judge import ModelJudge, StaticJudge
 
@@ -81,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dn-dc", type=float, default=None,
                         help="Defaults to the file's Refractive Increment header.")
     parser.add_argument("--summary", type=Path, default=Path("data/runs/series_summary.csv"))
+    parser.add_argument("--figures", type=Path, default=Path("data/figures"),
+                        help="Directory for one figure per run plus a session figure.")
+    parser.add_argument("--no-figures", action="store_true")
     args = parser.parse_args(argv)
 
     everything = sorted(args.data_dir.glob(args.sample_glob))
@@ -156,6 +160,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  warning: {warning}")
         print(f"  sidecar: {sidecar_path(csv_path).name}")
 
+        figure_path = ""
+        if not args.no_figures:
+            figure_path = str(
+                plot_run(state, config, frame, args.figures / f"{config.run_id}.png")
+            )
+            print(f"  figure : {Path(figure_path).name}")
+
         rows.append({
             "run_id": config.run_id,
             "cell": cell,
@@ -170,6 +181,11 @@ def main(argv: list[str] | None = None) -> int:
             "mw_over_m0_final": round(float(np.nanmedian(mw[-200:])), 4),
             "plateau_swing": round(plateau_swing(excess), 4),
             "n_warnings": len(state.warnings),
+            "nd_filter_changes": len(state.nd_filter_changes),
+            "at_full_scale": int(np.sum(np.abs(state.raw_signal - 1.0) <= 1e-9)),
+            "figure": figure_path,
+            "csv": str(csv_path),
+            "sidecar": str(sidecar_path(csv_path)),
             "error": "",
         })
 
@@ -177,13 +193,21 @@ def main(argv: list[str] | None = None) -> int:
     fieldnames = list({key for row in rows for key in row})
     order = ["run_id", "cell", "blank_file", "rows", "excised", "unclassified",
              "window", "candidates", "used_fallback", "judge",
-             "mw_over_m0_final", "plateau_swing", "n_warnings", "error"]
+             "mw_over_m0_final", "plateau_swing", "nd_filter_changes",
+             "at_full_scale", "n_warnings", "figure", "csv", "sidecar", "error"]
     fieldnames = [k for k in order if k in fieldnames]
     with args.summary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nsummary -> {args.summary}  ({len(rows)} runs)")
+
+    if not args.no_figures:
+        try:
+            session = plot_session(rows, args.figures / "session_overview.png")
+            print(f"session figure -> {session}")
+        except ValueError as error:
+            print(f"session figure skipped: {error}")
     return 0
 
 

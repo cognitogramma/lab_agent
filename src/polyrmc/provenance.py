@@ -42,6 +42,7 @@ def build_record(state: RunState, config: RunConfig) -> dict[str, Any]:
             "n_header_rows": state.n_header_rows,
             "time_format": state.time_format.value if state.time_format else None,
             "dropped_rows": state.dropped_rows,
+            "nd_filter_changes": state.nd_filter_changes,
         },
         "anomalies": [json.loads(a.model_dump_json()) for a in state.anomalies],
         "splice": json.loads(state.splice.model_dump_json()),

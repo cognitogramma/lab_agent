@@ -222,6 +222,34 @@ def identify_scattering_columns(
     return found
 
 
+def gain_change_indices(values: np.ndarray) -> list[int]:
+    """Indices where a gain-like setting changes value.
+
+    The ND filter attenuates the beam. When the instrument switches it
+    mid-acquisition, the scattering channel is rescaled by an amount this file
+    does not record, so readings either side of the change are **not on the
+    same scale**. Any quantity formed by comparing them -- Mw/M0 above all --
+    is meaningless across such a boundary.
+    """
+    series = pd.Series(values).ffill().bfill()
+    if series.isna().all():
+        return []
+    changed = series.ne(series.shift())
+    changed.iloc[0] = False
+    return np.flatnonzero(changed.to_numpy()).tolist()
+
+
+def at_full_scale(values: np.ndarray, tolerance: float = 1e-9) -> np.ndarray:
+    """Samples pinned at the detector's full-scale reading.
+
+    The ARGEN reports a normalised intensity whose ceiling is exactly 1.0. A
+    sample sitting on that value is not a measurement -- it is the detector
+    telling you it ran out of range.
+    """
+    values = np.asarray(values, dtype=float)
+    return np.isfinite(values) & (np.abs(values - 1.0) <= tolerance)
+
+
 def scoped_null_mask(frame: pd.DataFrame, scattering_columns: list[str]) -> np.ndarray:
     """Rows to drop: those with a null in **any** scattering channel.
 

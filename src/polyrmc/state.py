@@ -203,6 +203,11 @@ class RunState(BaseModel):
     dropped_rows: list[int] = Field(
         default_factory=list, description="Rows dropped for nulls in scattering channels."
     )
+    nd_filter_changes: list[int] = Field(
+        default_factory=list,
+        description="Samples where the ND filter changed. Readings either side of "
+        "one of these are not on the same scale.",
+    )
 
     anomalies: list[AnomalyRecord] = Field(default_factory=list)
     splice: SpliceRecord = Field(default_factory=SpliceRecord)
