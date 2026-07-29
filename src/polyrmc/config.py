@@ -117,20 +117,14 @@ class FitRangeConfig(BaseModel):
     min_r_squared: float = Field(0.95, gt=0, lt=1)
 
 
-PLACEHOLDER_MODEL = "gemini-SET-A-CURRENT-MODEL-ID"
-"""Deliberately invalid default, so an unpinned judge fails before it spends a run.
-
-Google rotates Gemini model identifiers, and a stale one would surface as an API
-error only after the file was ingested and its candidates generated. Read the
-current id from Google's model documentation and set it in the run config.
-"""
-
-
 class LoopConfig(BaseModel):
     """Bounds on a tier-1 propose -> judge -> re-propose loop."""
 
     max_iterations: int = Field(3, ge=1, description="Hard cap; then fall back.")
-    model: str = Field(PLACEHOLDER_MODEL, description="Pinned judge model id.")
+    # A preview id, pinned deliberately. Google revises and withdraws preview
+    # models, so a run recorded against this one may not be replayable later;
+    # the sidecar records the id so a divergence is at least visible.
+    model: str = Field("gemini-3.1-pro-preview", description="Pinned judge model id.")
     max_tokens: int = Field(4000, ge=256)
     replay: bool = Field(
         False, description="Reuse recorded decisions instead of calling the model."

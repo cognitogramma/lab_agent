@@ -56,10 +56,12 @@ def blank_level(path: Path, channel: str) -> float:
 def build_judge(kind: str, decision: str, loop: LoopConfig):
     if kind == "static":
         return StaticJudge()
-    if not os.environ.get("GOOGLE_API_KEY"):
+    # Both names are honoured by langchain-google-genai and the underlying SDK,
+    # so the guard must not be narrower than the client it is guarding.
+    if not any(os.environ.get(name) for name in ("GOOGLE_API_KEY", "GEMINI_API_KEY")):
         raise SystemExit(
-            "--judge model needs GOOGLE_API_KEY. Put it in .env as a single "
-            "line 'GOOGLE_API_KEY=...', or use --judge static."
+            "--judge model needs a Gemini key. Put it in .env as a single line "
+            "'GEMINI_API_KEY=...' (or 'GOOGLE_API_KEY=...'), or use --judge static."
         )
     return ModelJudge(decision, config=loop)
 
