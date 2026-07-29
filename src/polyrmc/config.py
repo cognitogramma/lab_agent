@@ -121,10 +121,9 @@ class LoopConfig(BaseModel):
     """Bounds on a tier-1 propose -> judge -> re-propose loop."""
 
     max_iterations: int = Field(3, ge=1, description="Hard cap; then fall back.")
-    # A preview id, pinned deliberately. Google revises and withdraws preview
-    # models, so a run recorded against this one may not be replayable later;
-    # the sidecar records the id so a divergence is at least visible.
-    model: str = Field("gemini-3.1-pro-preview", description="Pinned judge model id.")
+    # A stable (non-preview) id, so a recorded run stays replayable. Pro tiers
+    # return a zero free-tier quota; this one runs on the free plan.
+    model: str = Field("gemini-3.6-flash", description="Pinned judge model id.")
     max_tokens: int = Field(4000, ge=256)
     replay: bool = Field(
         False, description="Reuse recorded decisions instead of calling the model."

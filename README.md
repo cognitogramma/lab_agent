@@ -82,7 +82,7 @@ judge; the pipeline runs end to end without one.
 
 `--judge static` (the default) takes the conservative option deterministically
 and makes no network calls. `--judge model` uses the pinned Gemini model
-(`gemini-3.1-pro-preview`) and requires `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+(`gemini-3.6-flash`) and requires `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 Pro models need a paid Google plan; the free tier returns a zero quota for them.
 
 ```bash

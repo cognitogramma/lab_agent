@@ -32,6 +32,15 @@ from polyrmc.tier0.argen_io import (
     load_argen_file,
     parse_header_metadata,
 )
+from polyrmc.figures import (
+    plot_blank_audit,
+    plot_blank_comparison,
+    plot_derived_quantities,
+    plot_raw_trace,
+    plot_residual_diagnostics,
+    plot_series_comparison,
+    plot_smoothing_detail,
+)
 from polyrmc.plotting import plot_run, plot_session
 from polyrmc.tier0.dilution import plateau_swing
 from polyrmc.tier1.judge import ModelJudge, StaticJudge
@@ -47,10 +56,26 @@ def read_header(path: Path) -> dict[str, str]:
     return parse_header_metadata(preamble[: declared - 1], sep=",")
 
 
-def blank_level(path: Path, channel: str) -> float:
-    """Median blank counts for the analysed channel."""
+def blank_trace(path: Path, channel: str) -> tuple[np.ndarray, np.ndarray, float]:
+    """Elapsed hours, channel counts, and the median level of a blank.
+
+    The median is what gets subtracted; the trace is kept so the figure can show
+    whether that single number is a fair summary of the blank or is hiding drift.
+    """
     blank = load_argen_file(path, channel=channel)
-    return float(np.nanmedian(blank.data[channel].to_numpy(dtype=float)))
+    signal = blank.data[channel].to_numpy(dtype=float)
+    hours = np.asarray(blank.time_s, dtype=float) / 3600.0
+    return hours, signal, float(np.nanmedian(signal))
+
+
+def acquisition_day(header: dict[str, str]) -> str:
+    """Calendar day from the header's Start Date, or '' if unparseable.
+
+    A blank recorded on a different day than its sample can shift every excess
+    value in the run, so the comparison is worth making explicit.
+    """
+    raw = str(header.get("Start Date", "")).strip()
+    return raw.split()[0] if raw else ""
 
 
 def build_judge(kind: str, decision: str, loop: LoopConfig):
@@ -114,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
         if dn_dc is None:
             dn_dc = float(str(header.get("Refractive Increment", "0.15")).split()[0])
 
+        blank_header = read_header(blank_path)
+        blank_hours, blank_signal, blank_median = blank_trace(blank_path, args.channel)
+        same_day = acquisition_day(header) == acquisition_day(blank_header)
+
         loop = LoopConfig(max_iterations=2)
         config = RunConfig(
             run_id=path.stem.split(" - Sample")[0].replace(" ", "_")[:60],
@@ -124,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
                                   solvent_refractive_index=1.333, dn_dc=dn_dc),
             smoothing=SmoothingConfig(min_window=5, max_window=601, n_candidates=12),
             loop=loop,
-            solvent_blank_counts=blank_level(blank_path, args.channel),
+            solvent_blank_counts=blank_median,
         )
 
         try:
@@ -164,10 +193,19 @@ def main(argv: list[str] | None = None) -> int:
 
         figure_path = ""
         if not args.no_figures:
-            figure_path = str(
-                plot_run(state, config, frame, args.figures / f"{config.run_id}.png")
+            # One directory per run: five figures each would otherwise make the
+            # figures folder unnavigable at fifteen cells.
+            run_dir = args.figures / config.run_id
+            figure_path = str(plot_run(state, config, frame, run_dir / "00_overview.png"))
+            plot_raw_trace(state, config, frame, run_dir / "01_raw_ls8.png")
+            plot_smoothing_detail(state, config, frame, run_dir / "02_smoothing.png")
+            plot_derived_quantities(state, config, frame, run_dir / "03_derived.png")
+            plot_blank_comparison(
+                state, config, frame, blank_hours, blank_signal,
+                blank_path.name, run_dir / "04_blank.png",
             )
-            print(f"  figure : {Path(figure_path).name}")
+            plot_residual_diagnostics(state, config, frame, run_dir / "05_residuals.png")
+            print(f"  figures: {run_dir.name}/ (6 files)")
 
         rows.append({
             "run_id": config.run_id,
@@ -185,6 +223,10 @@ def main(argv: list[str] | None = None) -> int:
             "n_warnings": len(state.warnings),
             "nd_filter_changes": len(state.nd_filter_changes),
             "at_full_scale": int(np.sum(np.abs(state.raw_signal - 1.0) <= 1e-9)),
+            "blank_level": round(blank_median, 8),
+            "blank_same_day": same_day,
+            "sample_date": acquisition_day(header),
+            "blank_date": acquisition_day(blank_header),
             "figure": figure_path,
             "csv": str(csv_path),
             "sidecar": str(sidecar_path(csv_path)),
@@ -196,7 +238,8 @@ def main(argv: list[str] | None = None) -> int:
     order = ["run_id", "cell", "blank_file", "rows", "excised", "unclassified",
              "window", "candidates", "used_fallback", "judge",
              "mw_over_m0_final", "plateau_swing", "nd_filter_changes",
-             "at_full_scale", "n_warnings", "figure", "csv", "sidecar", "error"]
+             "at_full_scale", "n_warnings", "blank_level", "blank_same_day",
+             "sample_date", "blank_date", "figure", "csv", "sidecar", "error"]
     fieldnames = [k for k in order if k in fieldnames]
     with args.summary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -205,11 +248,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nsummary -> {args.summary}  ({len(rows)} runs)")
 
     if not args.no_figures:
-        try:
-            session = plot_session(rows, args.figures / "session_overview.png")
-            print(f"session figure -> {session}")
-        except ValueError as error:
-            print(f"session figure skipped: {error}")
+        for label, draw in (
+            ("session overview", lambda: plot_session(rows, args.figures / "session_overview.png")),
+            ("series comparison", lambda: plot_series_comparison(
+                rows, args.figures / "series_comparison.png")),
+            ("blank audit", lambda: plot_blank_audit(
+                rows, args.figures / "blank_audit.png")),
+        ):
+            try:
+                print(f"{label} -> {draw()}")
+            except ValueError as error:
+                print(f"{label} skipped: {error}")
     return 0
 
 

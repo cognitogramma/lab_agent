@@ -33,7 +33,7 @@
 
   "loop": {
     "max_iterations": 3,
-    "model": "gemini-3.1-pro-preview",
+    "model": "gemini-3.6-flash",
     "replay": false
   },
 
