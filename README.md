@@ -39,6 +39,7 @@ excluded* is the scientific claim.
 ```
 src/polyrmc/
   config.py       run configuration and physical constants (pydantic)
+  labeling.py     catalogue metadata: ownership, methods, sample, goal
   state.py        typed state: arrays, anomalies, splice, loops, provenance
   io_csv.py       the six-column CSV that is the only Part 1 → Part 2 interface
   provenance.py   per-run sidecar; replay a historical result without a model
@@ -64,6 +65,21 @@ src/polyrmc/
   tier2/  orchestrator  staging + human confirmation gate
 ```
 
+## Labelling a run
+
+`RunConfig.labels` carries the catalogue metadata — ownership, methods, sample,
+goal — as closed vocabularies, so stored runs can be grouped and correctly
+interpreted later. It is optional and no analysis stage reads it.
+
+Two checks earn their place. A run labelled ACD but configured
+`fixed_concentration` is refused at construction, because it would be analysed
+with no dilution trajectory and would still produce numbers. And because the
+sidecar serializes the whole config next to the data, confidential runs have
+their company and project redacted on write by default — the confidentiality
+flag and every scientific label survive.
+
+Full vocabulary in [docs/data_labeling.md](docs/data_labeling.md).
+
 ## Setup
 
 ```bash
@@ -88,7 +104,7 @@ requires `ANTHROPIC_API_KEY`.
 .venv\Scripts\python.exe -m pytest
 ```
 
-139 tests, no API key or instrument file required.
+181 tests, no API key or instrument file required.
 
 ## The scattering channel
 

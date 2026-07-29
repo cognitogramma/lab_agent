@@ -8,9 +8,10 @@ run is reproducible from its recorded configuration alone.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from polyrmc.labeling import ExperimentLabel, ExperimentType, experiment_type_for
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -136,11 +137,16 @@ class RunConfig(BaseModel):
 
     # Supplied, never inferred: misclassifying a run makes every downstream
     # number wrong in a way that looks entirely normal.
-    experiment_type: Literal["dilution_trajectory", "fixed_concentration"]
+    experiment_type: ExperimentType
 
     # The instrument writes ls1..ls16; only ls8 is the measurement. The others
     # are dropped at load and never reach any analysis stage.
     channel: str = Field("ls8", description="Scattering channel to analyse.")
+
+    # Catalogue metadata: ownership, methods, sample, goal. Optional because a
+    # run is analysable without it, but a labelled run is the one that can still
+    # be interpreted a year later. Never read by tier 0.
+    labels: ExperimentLabel | None = None
 
     optical: OpticalConfig
     dilution: DilutionConfig | None = None
@@ -160,4 +166,25 @@ class RunConfig(BaseModel):
     def _dilution_required(self) -> RunConfig:
         if self.experiment_type == "dilution_trajectory" and self.dilution is None:
             raise ValueError("dilution_trajectory runs require a DilutionConfig")
+        return self
+
+    @model_validator(mode="after")
+    def _labelled_goal_matches_experiment_type(self) -> RunConfig:
+        """Reject a label that contradicts the acquisition it describes.
+
+        A run labelled ACD but configured as fixed_concentration would be
+        analysed with no dilution trajectory at all -- and would still produce
+        numbers. Catching it here costs nothing; catching it in the results
+        costs the experiment.
+        """
+        if self.labels is None:
+            return self
+        implied = experiment_type_for(self.labels.goal)
+        if implied is not None and implied != self.experiment_type:
+            raise ValueError(
+                f"labels.goal is {self.labels.goal.goal.value}/"
+                f"{self.labels.goal.mode} which implies "
+                f"experiment_type={implied!r}, but the config says "
+                f"{self.experiment_type!r}"
+            )
         return self

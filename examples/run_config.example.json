@@ -4,6 +4,30 @@
   "experiment_type": "dilution_trajectory",
   "channel": "ls8",
 
+  "labels": {
+    "ownership": {
+      "confidentiality": "non_confidential",
+      "institution": "Tulane"
+    },
+    "methods": [
+      { "method": "sls", "observables": ["i_r", "kc_over_ir"] },
+      { "method": "dls", "observables": ["d_h", "diffusion_coefficient"] }
+    ],
+    "sample": {
+      "name": "lysozyme",
+      "sample_class": "protein",
+      "protein_subclass": "globular",
+      "concentration_g_per_cm3": 0.004,
+      "ph": 7.0,
+      "buffer": "50 mM phosphate, 100 mM NaCl",
+      "temperature_c": 25.0
+    },
+    "goal": {
+      "goal": "equilibrium_characterization",
+      "mode": "acd"
+    }
+  },
+
   "optical": {
     "wavelength_nm": 660.0,
     "angle_deg": 90.0,

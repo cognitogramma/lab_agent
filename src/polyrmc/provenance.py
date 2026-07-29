@@ -30,8 +30,19 @@ def sidecar_path(output_csv: str | Path) -> Path:
     return output_csv.with_suffix("").with_suffix(SIDECAR_SUFFIX)
 
 
-def build_record(state: RunState, config: RunConfig) -> dict[str, Any]:
-    """Assemble the full provenance record for a run."""
+def build_record(
+    state: RunState, config: RunConfig, *, redact_confidential: bool = True
+) -> dict[str, Any]:
+    """Assemble the full provenance record for a run.
+
+    The record embeds the whole config, so a confidential run's client identity
+    would otherwise travel with the data. By default those fields are redacted
+    and everything scientific is kept -- the record stays fully auditable, it
+    just stops naming the client. Pass ``redact_confidential=False`` for an
+    internal archive that is meant to carry attribution.
+    """
+    if redact_confidential and config.labels is not None:
+        config = config.model_copy(update={"labels": config.labels.redacted()})
     return {
         "schema_version": 1,
         "written_at": datetime.now(timezone.utc).isoformat(),
@@ -58,13 +69,18 @@ def build_record(state: RunState, config: RunConfig) -> dict[str, Any]:
     }
 
 
-def write_sidecar(state: RunState, config: RunConfig, output_csv: str | Path) -> Path:
+def write_sidecar(
+    state: RunState,
+    config: RunConfig,
+    output_csv: str | Path,
+    *,
+    redact_confidential: bool = True,
+) -> Path:
     """Write the sidecar next to the processed CSV."""
     path = sidecar_path(output_csv)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(build_record(state, config), indent=2, default=str), encoding="utf-8"
-    )
+    record = build_record(state, config, redact_confidential=redact_confidential)
+    path.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
     return path
 
 
