@@ -17,3 +17,8 @@ data/runs/*
 # with examples/run_series.py rather than committing results.
 data/figures/*
 !data/figures/.gitkeep
+# Plotting exports are a reshaped copy of data/runs -- same lab data, and the
+# full-resolution tables run to ~8 MB each. Regenerate with
+# examples/export_for_plotting.py.
+data/plotting/*
+!data/plotting/.gitkeep
