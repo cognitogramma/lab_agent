@@ -81,8 +81,8 @@ judge; the pipeline runs end to end without one.
 ```
 
 `--judge static` (the default) takes the conservative option deterministically
-and makes no network calls. `--judge model` uses the pinned Claude model and
-requires `ANTHROPIC_API_KEY`.
+and makes no network calls. `--judge model` uses the pinned Gemini model and
+requires `GOOGLE_API_KEY`, plus a `loop.model` set to a current Gemini model id.
 
 ```bash
 .venv\Scripts\python.exe -m pytest

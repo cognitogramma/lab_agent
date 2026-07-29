@@ -7,8 +7,8 @@ and writes a summary table alongside the per-run CSVs and provenance sidecars.
     python examples/run_series.py --data-dir "<folder>" --judge static
     python examples/run_series.py --data-dir "<folder>" --judge model
 
-``--judge model`` calls the pinned Claude model for every subjective decision
-and requires ANTHROPIC_API_KEY (put it in .env). ``--judge static`` takes the
+``--judge model`` calls the pinned Gemini model for every subjective decision
+and requires GOOGLE_API_KEY (put it in .env). ``--judge static`` takes the
 conservative option deterministically and makes no network calls.
 """
 
@@ -56,10 +56,10 @@ def blank_level(path: Path, channel: str) -> float:
 def build_judge(kind: str, decision: str, loop: LoopConfig):
     if kind == "static":
         return StaticJudge()
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("GOOGLE_API_KEY"):
         raise SystemExit(
-            "--judge model needs ANTHROPIC_API_KEY. Put it in .env as a single "
-            "line 'ANTHROPIC_API_KEY=sk-ant-...', or use --judge static."
+            "--judge model needs GOOGLE_API_KEY. Put it in .env as a single "
+            "line 'GOOGLE_API_KEY=...', or use --judge static."
         )
     return ModelJudge(decision, config=loop)
 

@@ -33,7 +33,7 @@
 
   "loop": {
     "max_iterations": 3,
-    "model": "claude-opus-4-8",
+    "model": "gemini-SET-A-CURRENT-MODEL-ID",
     "replay": false
   },
 

@@ -7,7 +7,7 @@ enforceable rather than aspirational.
 
 Three implementations:
 
-* :class:`ModelJudge` -- calls the pinned Claude model.
+* :class:`ModelJudge` -- calls the pinned Gemini model.
 * :class:`RecordedJudge` -- replays decisions from a provenance record.
 * :class:`StaticJudge` -- a deterministic rule, used by the offline test suite
   and as an escape hatch when no API key is configured.
@@ -21,7 +21,7 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, Field
 
-from polyrmc.config import LoopConfig
+from polyrmc.config import PLACEHOLDER_MODEL, LoopConfig
 from polyrmc.state import Candidate, JudgeDecision, ModelProvenance
 
 SYSTEM_PROMPT = """\
@@ -121,7 +121,7 @@ def _to_decision(
 
 
 class ModelJudge:
-    """Judge backed by the pinned Claude model."""
+    """Judge backed by the pinned Gemini model."""
 
     def __init__(
         self,
@@ -137,13 +137,19 @@ class ModelJudge:
 
     def _get_client(self) -> Any:
         if self._client is None:
+            if self.config.model == PLACEHOLDER_MODEL:
+                raise ValueError(
+                    "no judge model is pinned. Set loop.model in the run config to a "
+                    "current Gemini model id from Google's model documentation. "
+                    "Refusing to start a run that would fail only after ingest."
+                )
             # Imported lazily so tier-0 tests and offline runs never need the
             # provider package installed or an API key present.
-            from langchain_anthropic import ChatAnthropic
+            from langchain_google_genai import ChatGoogleGenerativeAI
 
-            self._client = ChatAnthropic(
+            self._client = ChatGoogleGenerativeAI(
                 model=self.config.model,
-                max_tokens=self.config.max_tokens,
+                max_output_tokens=self.config.max_tokens,
             ).with_structured_output(JudgeResponse)
         return self._client
 

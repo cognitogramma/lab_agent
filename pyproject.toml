@@ -21,7 +21,7 @@ dependencies = [
 # these, using the deterministic StaticJudge.
 judge = [
     "langchain>=1.0",
-    "langchain-anthropic>=1.0",
+    "langchain-google-genai>=2.0",
     "langgraph>=1.0",
 ]
 
