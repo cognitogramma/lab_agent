@@ -269,7 +269,7 @@ def run_part1(
     concentration_result = concentration_column(
         state.time_s,
         experiment_type=config.experiment_type,
-        c0_g_per_cm3=config.dilution.c0_g_per_cm3 if config.dilution else None,
+        c0_g_per_cm3=config.initial_concentration,
         flow_rate_cm3_per_s=(
             config.dilution.flow_rate_cm3_per_s if config.dilution else None
         ),

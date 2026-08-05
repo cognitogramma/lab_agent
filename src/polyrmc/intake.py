@@ -31,12 +31,16 @@ statement by a named human about their own experiment.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
 from polyrmc.state import Declaration
 from polyrmc.tier0.argen_io import lookup_metadata, parse_concentration
+
+if TYPE_CHECKING:  # avoids a cycle: config does not know about intake
+    from polyrmc.config import RunConfig
 
 QuestionKind = Literal["choice", "number", "text"]
 
@@ -655,6 +659,102 @@ def _derived_from(key: str, value: Any) -> dict[str, Any]:
     return {}
 
 
+class MissingDeclarations(ValueError):
+    """A config was asked for before the run had been declared.
+
+    Carries the outstanding keys so a caller can name them rather than saying
+    "invalid config" and leaving the researcher to work out which answer is
+    missing.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = missing
+        super().__init__(
+            "this run has not been declared yet. Still needed: "
+            + ", ".join(missing)
+            + ". These are statements about the experiment, so they are asked, "
+            "never inferred from the trace."
+        )
+
+
+def to_config(
+    declarations: dict[str, Declaration],
+    source_file: str | Path,
+    run_id: str,
+    channel: str = "ls8",
+    **overrides: Any,
+) -> "RunConfig":
+    """Build a run configuration from what a person declared.
+
+    This is what makes intake the authority rather than a parallel record.
+    Before it existed, ``experiment_type`` lived in a hand-written config *and*
+    in the declarations, with nothing reconciling them -- so a run could be
+    declared one thing and processed as another, which is the exact failure the
+    intake layer exists to prevent.
+
+    Only the values a person actually declared are set. An undeclared value
+    stays ``None`` and blocks whatever depends on it; nothing is defaulted into
+    place behind the researcher's back.
+
+    Raises
+    ------
+    MissingDeclarations
+        If a value the pipeline cannot run at all without is absent.
+    """
+    from polyrmc.config import DilutionConfig, OpticalConfig, RunConfig
+
+    value = {key: d.value for key, d in declarations.items()}
+
+    required = [key for key in ("experiment_type", "sample_class") if key not in value]
+    if required:
+        raise MissingDeclarations(required)
+
+    optical = OpticalConfig(
+        wavelength_nm=value.get("wavelength_nm", 660.0),
+        angle_deg=value.get("angle_deg", 90.0),
+        dn_dc=value["dn_dc"],
+    )
+
+    dilution = None
+    c0 = value.get("c0_g_per_cm3")
+    if value["experiment_type"] == "acd_dilution":
+        missing = [
+            key
+            for key in ("c0_g_per_cm3", "flow_rate_cm3_per_s", "cell_volume_cm3")
+            if not value.get(key)
+        ]
+        if missing:
+            raise MissingDeclarations(missing)
+        dilution = DilutionConfig(
+            c0_g_per_cm3=c0,
+            flow_rate_cm3_per_s=value["flow_rate_cm3_per_s"],
+            cell_volume_cm3=value["cell_volume_cm3"],
+        )
+        c0 = None  # the DilutionConfig copy is the one in force
+
+    settings: dict[str, Any] = {
+        "run_id": run_id,
+        "source_file": Path(source_file),
+        "channel": channel,
+        "experiment_type": value["experiment_type"],
+        "optical": optical,
+        "dilution": dilution,
+        "c0_g_per_cm3": c0,
+        "ls_units": value.get("ls_units"),
+        "toluene_ref": value.get("toluene_ref") or None,
+        "r_toluene_cm_inv": value.get("r_toluene_cm_inv") or None,
+        "solvent_blank_counts": value.get("buffer_blank") or 0.0,
+    }
+    settings.update(overrides)
+
+    config = RunConfig(**settings)
+    # Declared per instrument, never read off the trace. Absent leaves
+    # saturation masking blocked, which the run reports.
+    if value.get("saturation_ceiling"):
+        config.detectors.saturation_ceiling = float(value["saturation_ceiling"])
+    return config
+
+
 def render_question(question: Question, index: int | None = None) -> str:
     """Format one question for a terminal prompt."""
     prefix = f"[{index}] " if index is not None else ""
@@ -687,6 +787,8 @@ __all__ = [
     "Option",
     "Question",
     "Suggestion",
+    "MissingDeclarations",
     "build_intake_form",
     "render_question",
+    "to_config",
 ]

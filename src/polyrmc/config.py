@@ -227,6 +227,21 @@ class RunConfig(_Validated):
 
     optical: OpticalConfig
     dilution: DilutionConfig | None = None
+
+    # A fixed-concentration run has a c0 but no dilution geometry, so it needs
+    # somewhere to put it. On a dilution run the DilutionConfig copy is the one
+    # in force, since Q, V and c0 are one coherent set there.
+    c0_g_per_cm3: float | None = Field(
+        None, gt=0, description="Initial concentration, for runs with no dilution."
+    )
+
+    @property
+    def initial_concentration(self) -> float | None:
+        """c0 from wherever this run type keeps it."""
+        if self.dilution is not None:
+            return self.dilution.c0_g_per_cm3
+        return self.c0_g_per_cm3
+
     smoothing: SmoothingConfig = Field(default_factory=SmoothingConfig)
     detectors: DetectorConfig = Field(default_factory=DetectorConfig)
     baseline: BaselineConfig = Field(default_factory=BaselineConfig)

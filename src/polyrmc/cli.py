@@ -25,9 +25,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from polyrmc.config import RunConfig
-from polyrmc.intake import DeclarationSet, build_intake_form, render_question
-from polyrmc.pipeline import run_part1, run_part2
+from polyrmc.intake import (
+    DeclarationSet,
+    MissingDeclarations,
+    build_intake_form,
+    render_question,
+    to_config,
+)
+from polyrmc.pipeline import new_run_id, run_part1, run_part2
 from polyrmc.provenance import summarize_loop
+from polyrmc.state import Declaration
 from polyrmc.tier0.argen_io import DEFAULT_CHANNEL, load_argen_file
 from polyrmc.tier0.consistency import check_declarations
 from polyrmc.tier1.judge import ModelJudge, StaticJudge
@@ -204,6 +211,78 @@ def run_intake(args) -> int:
     return 0
 
 
+def run_process(args) -> int:
+    """Declarations in, verified CSV out. One command, no hand-written config.
+
+    This is the path a real run takes. The configuration is *derived* from what
+    a person declared rather than maintained beside it, so a run cannot be
+    declared one thing and processed as another -- which was possible while the
+    two lived in separate files.
+    """
+    stored = read_json(args.declarations)
+    declarations = {
+        key: Declaration.model_validate(entry) for key, entry in stored.items()
+    }
+
+    run_id = args.run_id or new_run_id(Path(args.raw).stem[:16])
+    try:
+        config = to_config(
+            declarations,
+            source_file=args.raw,
+            run_id=run_id,
+            channel=args.channel or DEFAULT_CHANNEL,
+        )
+    except MissingDeclarations as error:
+        print(f"cannot process this run: {error}")
+        print(f"\nRun intake first:\n  polyrmc intake --raw {args.raw} "
+              f"--declarations {args.declarations} --author <you>")
+        return 2
+
+    # The declaration-versus-data check runs before anything is computed. A run
+    # processed under a declaration the trace contradicts is the one error that
+    # leaves every number looking normal.
+    argen = load_argen_file(args.raw, channel=config.channel)
+    channel = argen.scattering_columns[0]
+    stir_column = next((c for c in argen.data.columns if "stir" in c.lower()), None)
+    report = check_declarations(
+        argen.time_s,
+        argen.data[channel].to_numpy(dtype=float),
+        {key: d.value for key, d in declarations.items()},
+        metadata=argen.metadata,
+        stir_speed=(
+            argen.data[stir_column].to_numpy(dtype=float) if stir_column else None
+        ),
+    )
+    for line in report.passed:
+        print(f"  ok       {line}")
+    for line in report.skipped:
+        print(f"  skipped  {line}")
+    for conflict in report.conflicts:
+        print(f"  CONFLICT {conflict.check}: declared {conflict.declared}, "
+              f"observed {conflict.observed}")
+        print(f"           {conflict.detail}")
+    if report.unresolved and not args.force:
+        print(
+            f"\nRefusing to process: {len(report.unresolved)} unresolved conflict(s). "
+            "Resolve them with a recorded reason, or pass --force if you have a "
+            "physical explanation and want it on the record."
+        )
+        return 2
+
+    judge = make_judge(args.judge, "smoothing_window", config)
+    state, csv_path = run_part1(config, judge=judge, output_csv=args.out)
+    state.declarations = declarations
+    state.declaration_conflicts = report.conflicts
+    if report.unresolved and args.force:
+        state.warnings.append(
+            f"processed over {len(report.unresolved)} unresolved conflict(s) by "
+            "explicit --force"
+        )
+
+    _report(state, f"processed -> {csv_path}")
+    return _verify(state, csv_path, config)
+
+
 def _report(state, label: str) -> None:
     print(f"\n{label}")
     for loop in state.loops.values():
@@ -235,7 +314,9 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
 
     parser = argparse.ArgumentParser(prog="polyrmc", description=__doc__)
-    parser.add_argument("stage", choices=["intake", "part1", "part2", "run"])
+    parser.add_argument(
+        "stage", choices=["intake", "process", "part1", "part2", "run"]
+    )
     parser.add_argument("--config", help="Run configuration JSON.")
     parser.add_argument("--csv", help="Processed CSV (part2 only).")
     # No default: part1 falls back to config.channel, and overriding that with a
@@ -265,6 +346,13 @@ def main(argv: list[str] | None = None) -> int:
         default="static",
         help="Tier-1 judge. 'static' takes the conservative option without a model.",
     )
+    parser.add_argument("--out", help="Where to write the processed CSV.")
+    parser.add_argument("--run-id", help="Identifier for this run.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Process despite unresolved conflicts. Recorded on the run.",
+    )
     parser.add_argument("--fit-order", type=int, default=1, choices=[1, 2])
     parser.add_argument(
         "--verify",
@@ -283,6 +371,11 @@ def main(argv: list[str] | None = None) -> int:
                 "questioned later by whoever finds it wrong."
             )
         return run_intake(args)
+
+    if args.stage == "process":
+        if not (args.raw and args.declarations):
+            parser.error("process requires --raw and --declarations")
+        return run_process(args)
 
     if not args.config:
         parser.error(f"{args.stage} requires --config")
