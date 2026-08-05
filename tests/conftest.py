@@ -199,7 +199,7 @@ def run_config(argen_file: Path, optical: OpticalConfig, dilution: DilutionConfi
     return RunConfig(
         run_id="test-run",
         source_file=argen_file,
-        experiment_type="dilution_trajectory",
+        experiment_type="acd_dilution",
         optical=optical,
         dilution=dilution,
         smoothing=SmoothingConfig(min_window=5, max_window=101, n_candidates=6),

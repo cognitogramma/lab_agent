@@ -64,6 +64,15 @@ class ArgenFile:
     data: pd.DataFrame
     time_s: np.ndarray
     time_format: TimeFormat
+    metadata_lines: list[str] = field(default_factory=list)
+    """Raw header lines 1..N-1, verbatim. Line N is the column row.
+
+    Kept as text as well as parsed into ``metadata``, because the output
+    contract puts this block back on top of the emitted file unchanged. A round
+    trip through the dict would silently drop every header line that did not
+    happen to parse as a key/value pair.
+    """
+
     scattering_columns: list[str] = field(default_factory=list)
     """The channel(s) actually analysed -- ls8 alone by default."""
     available_channels: list[str] = field(default_factory=list)
@@ -123,6 +132,70 @@ def parse_header_metadata(lines: list[str], sep: str = "\t") -> dict[str, str]:
         if key and value:
             metadata.setdefault(key, value)
     return metadata
+
+
+# Header spellings vary between acquisitions, so metadata is looked up by any
+# of its known aliases rather than by one exact key.
+METADATA_ALIASES: dict[str, tuple[str, ...]] = {
+    "c0_g_per_cm3": ("sample concentration", "concentration", "sampleconcentration"),
+    "sample_name": ("sample name", "sample", "samplename"),
+    "instrument": ("instrument", "device"),
+    "wavelength_nm": ("wavelength", "lambda", "laser wavelength"),
+    "dn_dc": ("refractive increment", "dn/dc", "refractive index increment"),
+}
+
+# Concentration in a header is not always in the units the pipeline wants.
+CONCENTRATION_UNITS: dict[str, float] = {
+    "g/cm3": 1.0,
+    "g/cm^3": 1.0,
+    "g/ml": 1.0,
+    "g/l": 1e-3,
+    "mg/ml": 1e-3,
+    "mg/cm3": 1e-3,
+    "kg/m3": 1e-3,
+    "ug/ml": 1e-6,
+    "mg/l": 1e-6,
+}
+
+
+def lookup_metadata(metadata: dict[str, str], field_name: str) -> tuple[str, str] | None:
+    """Find a metadata value by any of its known spellings.
+
+    Returns the matched header key alongside its value, so a caller can cite the
+    exact line it read rather than an internal alias.
+    """
+    normalised = {
+        "".join(key.lower().split()): (key, value) for key, value in metadata.items()
+    }
+    for alias in METADATA_ALIASES.get(field_name, ()):
+        hit = normalised.get("".join(alias.split()))
+        if hit is not None:
+            return hit
+    return None
+
+
+def parse_concentration(text: str) -> float | None:
+    """Convert a header concentration to g/cm^3, or return None if unsafe.
+
+    None means the unit was absent or unrecognised, and the caller must ask
+    rather than assume. Guessing mg/mL where the header meant g/L is a factor of
+    one thousand applied silently to every molar mass the run produces.
+    """
+    cleaned = str(text).strip().lower().replace("μ", "u")
+    number = ""
+    index = 0
+    while index < len(cleaned) and (cleaned[index].isdigit() or cleaned[index] in ".eE+-"):
+        number += cleaned[index]
+        index += 1
+    try:
+        value = float(number)
+    except ValueError:
+        return None
+
+    factor = CONCENTRATION_UNITS.get(cleaned[index:].strip().replace(" ", ""))
+    if factor is None:
+        return None
+    return value * factor
 
 
 def detect_time_format(tokens: list[str]) -> TimeFormat:
@@ -365,6 +438,7 @@ def load_argen_file(
     return ArgenFile(
         path=path,
         metadata=metadata,
+        metadata_lines=[line.rstrip("\r\n") for line in preamble[:column_row_index]],
         n_header_rows=n_header_rows,
         data=kept,
         time_s=time_s,

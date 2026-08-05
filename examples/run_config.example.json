@@ -1,7 +1,7 @@
 {
   "run_id": "example-001",
   "source_file": "data/raw/example_argen.txt",
-  "experiment_type": "dilution_trajectory",
+  "experiment_type": "acd_dilution",
   "channel": "ls8",
 
   "optical": {

@@ -112,7 +112,35 @@ def test_tier0_imports_only_from_tier0_and_config():
             elif isinstance(node, ast.Import):
                 module = node.names[0].name
             if module and module.startswith("polyrmc"):
-                assert not module.startswith(("polyrmc.tier1", "polyrmc.tier2")), (
+                assert not module.startswith(
+                    ("polyrmc.tier1", "polyrmc.tier2", "polyrmc.agent", "polyrmc.tools")
+                ), (
                     f"{path.name} imports {module}; tier 0 must not depend on a "
                     "higher tier"
                 )
+
+
+def test_the_measurement_path_does_not_import_the_agent():
+    """Invariant I1, checked one level up from tier 0.
+
+    The measurement modules must remain runnable, and testable, with the agent
+    package absent entirely. If one of them reaches for it, a model outage stops
+    being a judgment problem and becomes a correctness problem.
+    """
+    package = TIER0.parent
+    measurement = [
+        package / name
+        for name in ("pipeline.py", "io_csv.py", "state.py", "config.py", "verify.py")
+    ]
+    for path in measurement:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            module = None
+            if isinstance(node, ast.ImportFrom) and node.module:
+                module = node.module
+            elif isinstance(node, ast.Import):
+                module = node.names[0].name
+            assert not (module or "").startswith("polyrmc.agent"), (
+                f"{path.name} imports {module}; the measurement path must run with "
+                "no model layer present at all"
+            )

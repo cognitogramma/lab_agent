@@ -109,8 +109,8 @@ def plot_raw_trace(
     Nothing is smoothed, excised, or bridged. This is the figure to read when
     asking what the detector actually saw.
     """
-    hours = frame["time_s"].to_numpy(dtype=float) / 3600.0
-    raw = frame["signal_raw"].to_numpy(dtype=float)
+    hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
+    raw = frame["ls8"].to_numpy(dtype=float)
 
     figure, axis = plt.subplots(figsize=(11, 4.6), dpi=dpi)
     figure.patch.set_facecolor("white")
@@ -159,9 +159,9 @@ def plot_smoothing_detail(
     stretch chosen is the widest local swing, since that is where an
     over-aggressive window would do visible damage.
     """
-    hours = frame["time_s"].to_numpy(dtype=float) / 3600.0
-    raw = frame["signal_raw"].to_numpy(dtype=float)
-    smoothed = frame["signal_smoothed"].to_numpy(dtype=float)
+    hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
+    raw = frame["ls8"].to_numpy(dtype=float)
+    smoothed = frame["ls8_smoothed"].to_numpy(dtype=float)
     window = state.loops["smoothing_window"].resolved_value
 
     figure, (full, zoom) = plt.subplots(
@@ -248,9 +248,9 @@ def plot_derived_quantities(
     dpi: int = 130,
 ) -> Path:
     """Excess Rayleigh ratio and the aggregation index against time."""
-    hours = frame["time_s"].to_numpy(dtype=float) / 3600.0
-    excess = frame["rayleigh_ratio_cm_inv"].to_numpy(dtype=float)
-    mw = frame["mw_over_m0"].to_numpy(dtype=float)
+    hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
+    excess = frame["I_rayleigh"].to_numpy(dtype=float)
+    mw = frame["Mw_over_M0"].to_numpy(dtype=float)
 
     figure, (top, bottom) = plt.subplots(
         2, 1, figsize=(11, 6.2), sharex=True, dpi=dpi, gridspec_kw={"hspace": 0.18}
@@ -309,8 +309,8 @@ def plot_blank_comparison(
     than its sample can shift every excess value in the run. Drawing them on one
     axis makes that visible instead of leaving it implicit in a single number.
     """
-    hours = frame["time_s"].to_numpy(dtype=float) / 3600.0
-    raw = frame["signal_raw"].to_numpy(dtype=float)
+    hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
+    raw = frame["ls8"].to_numpy(dtype=float)
     blank_level = float(np.nanmedian(blank_signal)) if blank_signal.size else float("nan")
 
     figure, (top, bottom) = plt.subplots(
@@ -377,9 +377,9 @@ def plot_residual_diagnostics(
     absorbed. The autocorrelation panel is the same quantity the selector gated
     on, drawn so a reader can check the gate rather than trust it.
     """
-    raw = frame["signal_raw"].to_numpy(dtype=float)
-    smoothed = frame["signal_smoothed"].to_numpy(dtype=float)
-    hours = frame["time_s"].to_numpy(dtype=float) / 3600.0
+    raw = frame["ls8"].to_numpy(dtype=float)
+    smoothed = frame["ls8_smoothed"].to_numpy(dtype=float)
+    hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
     residual = raw - smoothed
     finite = residual[np.isfinite(residual)]
     window = state.loops["smoothing_window"].resolved_value

@@ -137,7 +137,7 @@ def test_saturation_region_is_classified_deterministically(noisy_trace):
     settled, _ambiguous = classify_all(records)
 
     types = {record.anomaly_type for record in settled}
-    assert AnomalyType.SATURATION in types
+    assert AnomalyType.SATURATION_ARTIFACT in types
     assert all(record.classified_by == "deterministic" for record in settled)
 
 

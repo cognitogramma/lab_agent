@@ -38,7 +38,7 @@ GAIN = "#1B4D8F"  # ND filter changes: deliberately outside the crimson family
 
 _TYPE_COLOUR = {
     AnomalyType.TRANSIENT_SPIKE: "#C8842F",
-    AnomalyType.SATURATION: "#93312B",
+    AnomalyType.SATURATION_ARTIFACT: "#93312B",
     AnomalyType.BASELINE_DRIFT: "#2E6A52",
     AnomalyType.STRUCTURAL_NOISE: "#6A5AA0",
 }
@@ -70,11 +70,11 @@ def plot_run(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    hours = frame["time_s"].to_numpy(dtype=float) / 3600.0
-    raw = frame["signal_raw"].to_numpy(dtype=float)
-    smoothed = frame["signal_smoothed"].to_numpy(dtype=float)
-    mw = frame["mw_over_m0"].to_numpy(dtype=float)
-    concentration = frame["concentration_g_per_cm3"].to_numpy(dtype=float)
+    hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
+    raw = frame["ls8"].to_numpy(dtype=float)
+    smoothed = frame["ls8_smoothed"].to_numpy(dtype=float)
+    mw = frame["Mw_over_M0"].to_numpy(dtype=float)
+    concentration = frame["concentration"].to_numpy(dtype=float)
     is_dilution = bool(np.isfinite(concentration).any())
 
     figure, (top, bottom) = plt.subplots(
@@ -137,8 +137,8 @@ def plot_run(
 
     window = state.loops["smoothing_window"].resolved_value
     title = (
-        f"{state.run_id}   ·   channel {config.channel}   ·   "
-        f"{len(frame):,} points over {hours[-1]:.1f} h   ·   "
+        f"{state.run_id}   Â·   channel {config.channel}   Â·   "
+        f"{len(frame):,} points over {hours[-1]:.1f} h   Â·   "
         f"Savitzky-Golay window {window}, order {config.smoothing.polyorder}"
     )
     top.set_title(title, fontsize=9.5, color=INK, loc="left", pad=10)
@@ -148,7 +148,7 @@ def plot_run(
     if is_dilution:
         order = np.argsort(concentration)
         bottom.plot(
-            concentration[order], frame["rayleigh_ratio_cm_inv"].to_numpy(float)[order],
+            concentration[order], frame["I_rayleigh"].to_numpy(float)[order],
             color=ACCENT, linewidth=0.9,
         )
         bottom.set_xlabel("concentration (g/cm$^3$)", fontsize=9, color=INK)
@@ -187,7 +187,7 @@ def plot_run(
         )
     if notes:
         figure.text(
-            0.5, -0.005, "   ·   ".join(notes), ha="center", fontsize=8, color=MUTED,
+            0.5, -0.005, "   Â·   ".join(notes), ha="center", fontsize=8, color=MUTED,
         )
 
     figure.savefig(out_path, bbox_inches="tight", facecolor="white")
@@ -257,7 +257,7 @@ def plot_session(rows: list[dict], out_path: str | Path, dpi: int = 130) -> Path
     axis.set_xticklabels(labels, rotation=38, ha="right", fontsize=8, color=INK)
     axis.set_ylabel("M$_w$/M$_0$ at end of run", fontsize=9, color=INK)
     axis.set_title(
-        "Aggregation index by condition   ·   hollow = endpoint not a meaningful "
+        "Aggregation index by condition   Â·   hollow = endpoint not a meaningful "
         "summary (trace never plateaued, ND filter changed, or detector railed)",
         fontsize=9.5, color=INK, loc="left", pad=12,
     )

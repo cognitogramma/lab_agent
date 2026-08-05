@@ -30,7 +30,7 @@ def classify_deterministic(record: AnomalyRecord) -> AnomalyType | None:
     # routinely merge a stuck stretch with its noisy edges, which dilutes the
     # fraction while leaving the physical signature untouched.
     if "saturation_run" in record.detected_by and longest_run_points >= 5:
-        return AnomalyType.SATURATION
+        return AnomalyType.SATURATION_ARTIFACT
 
     # Short, large, and the trace comes back to the trend it was following.
     # Keyed on core_points -- how many samples actually depart from the trend --

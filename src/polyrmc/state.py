@@ -21,12 +21,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AnomalyType(str, Enum):
-    """The four artifact classes the pipeline distinguishes."""
+    """The artifact classes the pipeline distinguishes.
+
+    The four wire values are the design's classification taxonomy verbatim.
+    ``splice_gap`` is bookkeeping rather than a classification: it marks a break
+    in acquisition rather than a defect in the signal.
+    """
 
     TRANSIENT_SPIKE = "transient_spike"
     BASELINE_DRIFT = "baseline_drift"
-    SATURATION = "saturation"
+    SATURATION_ARTIFACT = "saturation_artifact"
     STRUCTURAL_NOISE = "structural_noise"
+    SPLICE_GAP = "splice_gap"
 
 
 class TimeFormat(str, Enum):
@@ -35,6 +41,70 @@ class TimeFormat(str, Enum):
     WRAPPING_MMSS = "wrapping_mmss"  # MM:SS(.s), resets to zero every hour
     ABSOLUTE_HHMMSS = "absolute_hhmmss"
     SECONDS = "seconds"
+
+
+class Declaration(BaseModel):
+    """One statement by a person about their own experiment.
+
+    Author and timestamp are mandatory. A declaration is the pipeline's record
+    of who asserted a physical fact, and an unattributed assertion cannot be
+    questioned later by whoever finds it wrong.
+    """
+
+    value: Any
+    author: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    recalled_from: str | None = Field(
+        None, description="Run id, if this was pre-filled from a previous run."
+    )
+    derived_from: str | None = Field(
+        None,
+        description="Set when another declaration fixed this value outright, e.g. "
+        "the instrument fixing the wavelength. Records that no separate "
+        "judgment was involved.",
+    )
+
+
+class Conflict(BaseModel):
+    """A declaration that the data does not appear to support.
+
+    A conflict never overrides the declaration and is never resolved by code.
+    The data can be surprising for good reasons; only the researcher knows
+    which. Resolution is an explicit act with a recorded reason.
+    """
+
+    check: str
+    declared: str
+    observed: str
+    detail: str = ""
+    resolved: bool = False
+    resolution_reason: str | None = None
+    resolved_by: str | None = None
+
+
+class PathChoice(BaseModel):
+    """Which branch a run took where the design leaves the question open.
+
+    Several decisions in the specification are unresolved and cannot be closed
+    by design work -- they need someone with direct knowledge of how the run was
+    acquired. Every one of them has a defined behaviour for *each* possible
+    answer, including the answer not being available yet, and this record says
+    which of those branches a given run actually went down.
+
+    That is what keeps an unanswered question from becoming an invisible
+    assumption: the run completes, the affected column is blocked or computed by
+    a stated substitute, and the reason travels with the output.
+    """
+
+    question: str = Field(..., description="The open question, e.g. 'OPEN-1'.")
+    decision: str = Field(..., description="The branch taken.")
+    because: str = Field(..., description="Why this branch and not another.")
+    alternatives: list[str] = Field(
+        default_factory=list, description="Branches not taken on this run."
+    )
+    blocked: list[str] = Field(
+        default_factory=list, description="Outputs this branch cannot produce."
+    )
 
 
 class AnomalyRecord(BaseModel):
@@ -55,6 +125,12 @@ class AnomalyRecord(BaseModel):
     classified_by: Literal["deterministic", "model", "fallback"] | None = None
     rationale: str | None = Field(
         None, description="Free text if a model assigned the type."
+    )
+
+    decision: Literal["pending", "excise", "keep", "correct"] = Field(
+        "pending",
+        description="What to do with this region. A region still pending when the "
+        "run tries to emit is an unfinished judgment, and blocks the emit.",
     )
 
     @property
@@ -114,6 +190,85 @@ class JudgeDecision(BaseModel):
         description="Logged alongside the accepted one. For fit ranges this is "
         "the scientific claim: which points were excluded from the linear region.",
     )
+
+
+class AnchorCandidate(BaseModel):
+    """One region eligible to be used as baseline.
+
+    Candidates are enumerated by code. Nothing draws freehand on the measurement
+    path: a judge -- model or human -- selects among these by id, and a freehand
+    drag in a UI snaps to them. That is what keeps every index computation in
+    code while still letting the selection be a matter of taste.
+    """
+
+    id: int
+    index_range: tuple[int, int]
+    """Inclusive."""
+
+    duration_fraction: float = Field(..., description="Span as a fraction of the run.")
+    mean_level: float
+    local_slope: float = Field(..., description="Lag-slope, signal units per second.")
+    local_variance: float
+    position_fraction: float = Field(..., description="Midpoint as a fraction of the run.")
+
+    @property
+    def n_points(self) -> int:
+        return self.index_range[1] - self.index_range[0] + 1
+
+
+class DriftModel(BaseModel):
+    """A fitted drift curve, recorded so the correction can be undone.
+
+    Only two kinds are permitted. Anything with enough freedom to follow the
+    transition will absorb the kinetics, so splines and higher-order polynomials
+    are not options -- the drift model must be slower than the kinetics by
+    construction, and the slope ceiling in the validator enforces that
+    numerically.
+    """
+
+    kind: Literal["poly", "piecewise_linear"]
+    order: int | None = None
+    coefficients: list[float] = Field(default_factory=list)
+    anchor_ranges: list[tuple[int, int]] = Field(default_factory=list)
+
+    # Not in the published schema, but reversibility requires exact
+    # reconstruction, and a polynomial fitted on scaled time cannot be
+    # re-evaluated without the scaling that produced it.
+    time_origin: float = 0.0
+    time_scale: float = 1.0
+
+    reference_level: float = Field(
+        0.0,
+        description="The fitted curve's value at the first sample, subtracted so "
+        "the correction removes the trend and not the level. The constant term "
+        "of a fit to baseline regions is the sample's own scattering, not drift; "
+        "removing it would zero the trace at t=0 and make every ratio built on "
+        "it -- Mw/M0 above all -- meaningless.",
+    )
+
+    max_slope_ratio: float = Field(
+        ..., description="Drift lag-slope as a fraction of the signal's own."
+    )
+    fold_change_impact: float = Field(
+        ..., description="Relative change in total fold change if applied."
+    )
+    reversible: bool = True
+
+
+class JudgeVerdict(BaseModel):
+    """One lane's choice, and the diagnostics that drove it.
+
+    ``cited_diagnostics`` is not decoration. A lane that cannot name which
+    numbers moved it has not reasoned about them, and the citation is what lets
+    a reviewer check the reasoning against the shortlist rather than taking the
+    rationale at its word.
+    """
+
+    lane: Literal["llm", "vlm", "human", "fallback"]
+    window_length: int
+    rationale: str
+    cited_diagnostics: list[str] = Field(default_factory=list)
+    model: str = "unknown"
 
 
 class ModelProvenance(BaseModel):
@@ -187,6 +342,15 @@ class RunState(BaseModel):
     run_id: str
     source_file: str
 
+    # Intake -- declared by a human, never inferred from the trace. A non-empty
+    # unresolved conflict list blocks emission of the boundary CSV.
+    declarations: dict[str, Declaration] = Field(default_factory=dict)
+    declaration_conflicts: list[Conflict] = Field(default_factory=list)
+    blocked: list[str] = Field(
+        default_factory=list,
+        description="Human-readable reasons a column could not be computed.",
+    )
+
     # Raw + derived arrays. Kept as numpy arrays, excluded from serialization --
     # the sidecar log records decisions and indices, not bulk data.
     time_s: np.ndarray | None = Field(None, exclude=True)
@@ -200,6 +364,11 @@ class RunState(BaseModel):
 
     time_format: TimeFormat | None = None
     n_header_rows: int | None = None
+    metadata_lines: list[str] = Field(
+        default_factory=list,
+        description="The raw file's header lines, verbatim. Carried so the "
+        "emitted CSV can put them back on top unchanged.",
+    )
     dropped_rows: list[int] = Field(
         default_factory=list, description="Rows dropped for nulls in scattering channels."
     )
@@ -213,6 +382,63 @@ class RunState(BaseModel):
     splice: SpliceRecord = Field(default_factory=SpliceRecord)
     loops: dict[str, LoopState] = Field(default_factory=dict)
 
+    noise_floor: float | None = None
+    window_length: int | None = None
+    polyorder: int | None = None
+
+    # The two-lane judge. Disagreement between an independent numeric reading
+    # and an independent visual one is information, not a fault: it is the
+    # cheapest available signal that a run is unusual, so it is surfaced rather
+    # than averaged away.
+    judge_status: Literal[
+        "not_run", "human", "both_lanes", "llm_only", "vlm_only", "escalated", "fallback"
+    ] = "not_run"
+    llm_lane: JudgeVerdict | None = None
+    vlm_lane: JudgeVerdict | None = None
+    lanes_disagreed: bool = False
+    fallback_taken: bool = False
+
+    execution_history: list[str] = Field(
+        default_factory=list,
+        description="Append-only record of what actually happened, in order. "
+        "Narration is generated from this and from state, never authored "
+        "independently, so what the agent says cannot drift from what it did.",
+    )
+    paths: list[PathChoice] = Field(
+        default_factory=list,
+        description="The branch taken at each unresolved design question.",
+    )
+    censored_indices: list[int] = Field(
+        default_factory=list,
+        description="Samples masked as saturated. Censored, not wrong: the true "
+        "value is at least the recorded one, so no computed column may carry a "
+        "value here.",
+    )
+
+    # Baseline correction. The default is no correction: anchor selection
+    # decides what counts as signal, and unlike smoothing there is no downstream
+    # check that catches getting it wrong.
+    transition_region: tuple[int, int] | None = None
+    anchor_candidates: list[AnchorCandidate] = Field(default_factory=list)
+    anchors_selected: list[int] = Field(
+        default_factory=list, description="Candidate ids, not indices."
+    )
+    anchor_selected_by: Literal["none", "llm", "vlm", "both", "researcher"] = "none"
+    drift_model: DriftModel | None = None
+    baseline_applied: bool = False
+
+    m0: Any = Field(
+        None,
+        exclude=True,
+        description="The chosen M0 reference (an m0.M0Result). Summarised into "
+        "the sidecar rather than serialised here, to keep tier 0 free of a "
+        "dependency on this module.",
+    )
+
     fit: FitResult | None = None
     parameters: DerivedParameters | None = None
     warnings: list[str] = Field(default_factory=list)
+
+    @property
+    def unresolved_conflicts(self) -> list[Conflict]:
+        return [c for c in self.declaration_conflicts if not c.resolved]

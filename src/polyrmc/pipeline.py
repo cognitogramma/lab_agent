@@ -18,17 +18,20 @@ import numpy as np
 from polyrmc.config import RunConfig
 from polyrmc.io_csv import read_processed_csv, write_processed_csv
 from polyrmc.provenance import write_sidecar
-from polyrmc.state import AnomalyType, DerivedParameters, RunState
-from polyrmc.tier0 import baseline as baseline_module
+from polyrmc.state import AnomalyType, DerivedParameters, PathChoice, RunState
 from polyrmc.tier0 import optics
-from polyrmc.tier0.argen_io import (
-    at_full_scale,
-    gain_change_indices,
-    load_argen_file,
-)
+from polyrmc.tier0.argen_io import gain_change_indices, load_argen_file
+from polyrmc.tier0.anchors import propose_anchors
+from polyrmc.tier0.censoring import apply_censoring, censor_saturation
 from polyrmc.tier0.classify import classify_all
+from polyrmc.tier0.columns import (
+    concentration_column,
+    mw_over_m0_column,
+    rayleigh_column,
+)
 from polyrmc.tier0.detect import detect_anomalies, noise_floor
-from polyrmc.tier0.dilution import aggregation_index, concentration_at, plateau_swing
+from polyrmc.tier0.m0 import select_m0
+from polyrmc.tier0.dilution import plateau_swing
 from polyrmc.tier0.fit_range import apply_fit_range, sorted_finite
 from polyrmc.tier0.smoothing import savgol_smooth
 from polyrmc.tier0.splice import apply_splice
@@ -61,6 +64,7 @@ def run_part1(
     state.raw_signal = argen.data[channel].to_numpy(dtype=float)
     state.time_format = argen.time_format
     state.n_header_rows = argen.n_header_rows
+    state.metadata_lines = argen.metadata_lines
     state.dropped_rows = argen.dropped_rows
 
     if not argen.is_uniformly_sampled:
@@ -86,14 +90,6 @@ def run_part1(
             "or supply the filter transmission."
         )
 
-    railed = at_full_scale(state.raw_signal)
-    if railed.any():
-        state.warnings.append(
-            f"{int(railed.sum())} sample(s) sit exactly at the detector's full-scale "
-            "reading of 1.0: the instrument ran out of range and those points are "
-            "limits, not measurements"
-        )
-
     records, _change_points = detect_anomalies(
         state.time_s, state.raw_signal, channel, config.detectors
     )
@@ -109,27 +105,142 @@ def run_part1(
 
     state.spliced_signal, state.splice = apply_splice(state.raw_signal, state.anomalies)
 
-    # Only correct drift that was actually detected. On a dilution trajectory
-    # the exponential decay *is* the measurement, and a flexible baseline
-    # fitted to it would subtract the signal along with any drift.
-    has_drift = any(
-        record.anomaly_type is AnomalyType.BASELINE_DRIFT for record in state.anomalies
+    # Record what was done with each region. A region left 'pending' is an
+    # unfinished judgment and blocks emission through the tool surface, which is
+    # exactly what an unclassifiable region should do.
+    for record in state.anomalies:
+        if record.anomaly_type is None:
+            continue
+        if record.anomaly_type is AnomalyType.BASELINE_DRIFT:
+            record.decision = "keep"
+        elif record.start_index in state.splice.excised_indices:
+            record.decision = "excise"
+        else:
+            record.decision = "keep"
+
+    # Saturation is censoring, keyed on the declared detector ceiling. Masked
+    # to NaN with the timestamps left in place; no computed column may carry a
+    # value at these indices. Undeclared ceiling is its own path: nothing is
+    # masked and the omission is reported, because reading the ceiling off the
+    # trace is circular.
+    state.spliced_signal, censoring = censor_saturation(
+        state.spliced_signal,
+        ceiling=config.detectors.saturation_ceiling,
+        run_ceiling=config.detectors.saturation_run_ceiling,
+        fraction_ceiling=config.detectors.saturation_fraction_ceiling,
     )
-    if has_drift:
-        state.corrected_signal, state.baseline = baseline_module.correct_drift(
-            state.time_s, state.spliced_signal, method="asls"
+    state.censored_indices = censoring.censored_indices
+    state.blocked.extend(censoring.blocked)
+    state.warnings.extend(censoring.escalations)
+
+    surviving = int(np.isfinite(state.spliced_signal).sum())
+    if censoring.applied and surviving < config.smoothing.min_window:
+        raise ValueError(
+            f"censoring left {surviving} usable sample(s) of "
+            f"{state.spliced_signal.size}: a declared ceiling of "
+            f"{censoring.ceiling:g} sits at or below almost the entire trace. Either "
+            "the ceiling is wrong for this instrument, or the acquisition railed "
+            "throughout and there is nothing here to analyse."
         )
-    else:
-        state.baseline = np.zeros_like(state.spliced_signal)
-        state.corrected_signal = state.spliced_signal
+    state.paths.append(
+        PathChoice(
+            question="OPEN-6",
+            decision="mask-and-exclude" if censoring.applied else "no ceiling declared",
+            because=(
+                f"{censoring.n_censored} sample(s) at or above {censoring.ceiling:g} "
+                f"masked; {len(censoring.sustained_spans)} sustained span(s) marked "
+                "censored"
+            )
+            if censoring.applied
+            else "saturation_ceiling is not declared, so nothing was masked",
+            alternatives=["cap-and-annotate (rejected)", "keep-and-flag (rejected)"],
+            blocked=censoring.blocked,
+        )
+    )
+    if censoring.sustained_spans:
+        state.warnings.append(
+            "the smoother interpolates across gaps for its filter pass and restores "
+            "NaN afterwards, so no censored sample carries a value -- but samples "
+            "within half a window of a sustained censored span were computed partly "
+            "from that interpolation, and should be treated as such"
+        )
+
+    # Drift is detected and recorded, not corrected. Anchor selection decides
+    # what counts as signal, and a curve fitted to anchors that were really part
+    # of the kinetics yields a smooth, plausible, physically wrong trace that no
+    # downstream check will flag. Until the anchor machinery and its tolerances
+    # are calibrated against the golden runs, the specified fallback is to flag
+    # and leave alone.
+    drift_regions = [
+        record
+        for record in state.anomalies
+        if record.anomaly_type is AnomalyType.BASELINE_DRIFT
+    ]
 
     # Regions the detectors flagged -- including ones classification could not
-    # name -- are excluded from landmark detection. They are already suspect,
-    # so they are not features smoothing is obliged to preserve.
+    # name -- may not appear in an anchor. They are already suspect, so they are
+    # not baseline by definition.
     suspect = np.zeros(state.raw_signal.size, dtype=bool)
     for record in state.anomalies:
         suspect[record.start_index : record.end_index + 1] = True
+    suspect[state.censored_indices] = True
 
+    state.anchor_candidates, state.transition_region = propose_anchors(
+        state.time_s,
+        state.spliced_signal,
+        noise_floor=noise_floor(state.spliced_signal),
+        config=config.baseline,
+        excluded=suspect,
+    )
+
+    # Proposed, rendered, and left alone. Applying a correction is a commit call
+    # requiring researcher approval, so the measurement path here always carries
+    # the uncorrected trace.
+    state.baseline = np.zeros_like(state.spliced_signal)
+    state.corrected_signal = state.spliced_signal
+    state.baseline_applied = False
+    state.paths.append(
+        PathChoice(
+            question="OPEN-5",
+            decision="propose anchors, do not correct",
+            because=(
+                f"{len(drift_regions)} drift region(s) detected; "
+                f"{len(state.anchor_candidates)} anchor candidate(s) enumerated "
+                f"outside the transition region {state.transition_region}. The "
+                "default is no correction: applying one is a commit call, because "
+                "anchor selection decides what counts as signal and no downstream "
+                "check catches getting it wrong."
+            ),
+            alternatives=["poly over selected anchors", "piecewise_linear"],
+        )
+    )
+    if state.transition_region is not None:
+        low, high = state.transition_region
+        covered = (high - low + 1) / state.raw_signal.size
+        if covered > 0.5:
+            state.warnings.append(
+                f"the transition region spans {100 * covered:.0f}% of the run "
+                f"(samples {low}-{high}), so almost nothing is left that could serve "
+                "as baseline. On a dilution run this is expected -- the decay is the "
+                "measurement, not drift -- and it is why no anchor is offered."
+            )
+
+    if drift_regions and len(state.anchor_candidates) < config.baseline.min_anchors:
+        state.warnings.append(
+            f"{len(drift_regions)} baseline-drift region(s) detected, but only "
+            f"{len(state.anchor_candidates)} anchor candidate(s) survive the flatness, "
+            "coverage and transition guards -- fewer than the minimum of "
+            f"{config.baseline.min_anchors}. No correction is offerable on this run."
+        )
+    elif drift_regions:
+        state.warnings.append(
+            f"{len(drift_regions)} baseline-drift region(s) detected and "
+            f"{len(state.anchor_candidates)} anchor candidate(s) proposed. Nothing was "
+            "subtracted: select anchors and apply the correction explicitly."
+        )
+
+    # The same suspect mask drives landmark detection: a flagged region is not
+    # a kinetic feature smoothing is obliged to preserve.
     window_loop = select_smoothing_window(
         state.corrected_signal,
         smoothing_config=config.smoothing,
@@ -144,28 +255,75 @@ def run_part1(
             "smoothing window selection produced no usable option; the trace may be "
             "too short or too noisy for any window to pass the safety gates"
         )
+    state.window_length = int(window_loop.resolved_value)
+    state.polyorder = config.smoothing.polyorder
+    state.noise_floor = float(noise_floor(state.spliced_signal))
     state.smoothed_signal = savgol_smooth(
-        state.corrected_signal, int(window_loop.resolved_value), config.smoothing.polyorder
+        state.corrected_signal, state.window_length, state.polyorder
     )
 
-    if config.experiment_type == "dilution_trajectory" and config.dilution is not None:
-        state.concentration = concentration_at(state.time_s, config.dilution)
-    else:
-        state.concentration = np.full_like(state.time_s, np.nan)
+    # Every column below routes through an explicit branch, including the branch
+    # where the question behind it has not been answered yet. An unanswered
+    # question costs that column and a recorded reason; it never silently
+    # becomes an assumption.
+    concentration_result = concentration_column(
+        state.time_s,
+        experiment_type=config.experiment_type,
+        c0_g_per_cm3=config.dilution.c0_g_per_cm3 if config.dilution else None,
+        flow_rate_cm3_per_s=(
+            config.dilution.flow_rate_cm3_per_s if config.dilution else None
+        ),
+        cell_volume_cm3=config.dilution.cell_volume_cm3 if config.dilution else None,
+    )
+    state.concentration = concentration_result.values
+    state.paths.append(concentration_result.path)
+    state.blocked.extend(concentration_result.path.blocked)
+
+    rayleigh_result = rayleigh_column(
+        state.smoothed_signal,
+        ls_units=config.ls_units,
+        buffer_blank=config.solvent_blank_counts,
+        toluene_ref=config.toluene_ref,
+        r_toluene_cm_inv=config.r_toluene_cm_inv,
+        alpha=config.optical.alpha,
+    )
+    rayleigh = rayleigh_result.values
+    state.paths.append(rayleigh_result.path)
+    state.blocked.extend(rayleigh_result.path.blocked)
+    calibrated = rayleigh_result.available
+
+    # M0 divides every value in the aggregation index, so its window is chosen
+    # and its sensitivity measured rather than defaulted to the first sample.
+    m0 = select_m0(
+        state.time_s,
+        state.smoothed_signal - config.solvent_blank_counts,
+        noise_floor=noise_floor(state.smoothed_signal),
+        max_window_fraction=config.m0_max_window,
+        sensitivity_ceiling=config.m0_sensitivity_ceiling,
+        config=config.baseline,
+        excluded=suspect,
+        transition=state.transition_region,
+    )
+    state.m0 = m0
+    state.blocked.extend(m0.blocked)
+    state.warnings.extend(m0.blocked)
+    state.warnings.extend(m0.escalations)
+
+    mw_result = mw_over_m0_column(
+        state.smoothed_signal,
+        concentration=state.concentration,
+        i_rayleigh=rayleigh if calibrated else None,
+        buffer_blank=config.solvent_blank_counts,
+        reference=m0.value if not calibrated else None,
+    )
+    mw_over_m0 = mw_result.values
+    state.paths.append(mw_result.path)
+    state.blocked.extend(mw_result.path.blocked)
+    for note in mw_result.path.alternatives:
+        state.warnings.append(note)
 
     excess = optics.excess_scattering(state.smoothed_signal, config.solvent_blank_counts)
-    rayleigh, calibrated = optics.rayleigh_ratio(excess, config.optical.alpha)
-    if not calibrated:
-        state.warnings.append(
-            "alpha is not set: the rayleigh_ratio column holds excess counts, not "
-            "cm^-1. A2*Mw and Mw/M0 remain valid; Mw and A2 alone do not."
-        )
-
     try:
-        # Computed on the excess, not the total. Solvent scattering is a
-        # constant that does not aggregate, so leaving it in drags the ratio
-        # toward 1 -- about 10% on a real liraglutide run with its own blank.
-        mw_over_m0 = aggregation_index(excess)
         reference = float(np.nanmedian(excess[np.isfinite(excess)][:50]))
         excess_noise = noise_floor(excess)
         if excess_noise > 0 and reference < 10.0 * excess_noise:
@@ -197,19 +355,35 @@ def run_part1(
                 "value depends on where acquisition happened to stop"
             )
     except ValueError as error:
-        state.warnings.append(f"Mw/M0 not computed: {error}")
-        mw_over_m0 = np.full_like(state.time_s, np.nan)
+        state.warnings.append(f"Mw/M0 diagnostics not computed: {error}")
+
+    # The last word on saturation, applied once over every computed column at
+    # the end. A per-column rule would be re-derived at each new column and
+    # eventually forgotten; doing it here makes "no censored index carries a
+    # value" a single checkable statement.
+    apply_censoring(
+        {
+            "concentration": state.concentration,
+            "smoothed": state.smoothed_signal,
+            "rayleigh": rayleigh,
+            "mw_over_m0": mw_over_m0,
+        },
+        state.censored_indices,
+    )
 
     output_csv = Path(output_csv) if output_csv else _default_output(config, channel)
     write_processed_csv(
         output_csv,
         {
-            "time_s": state.time_s,
-            "concentration_g_per_cm3": state.concentration,
-            "signal_raw": state.raw_signal,
-            "signal_smoothed": state.smoothed_signal,
-            "rayleigh_ratio_cm_inv": rayleigh,
-            "mw_over_m0": mw_over_m0,
+            "seconds": state.time_s,
+            "concentration": state.concentration,
+            # The cleaned and spliced channel, not the raw one: the excised
+            # points are excised in this file too, or the consumer would see
+            # values the pipeline decided were not measurements.
+            "ls8": state.spliced_signal,
+            "ls8_smoothed": state.smoothed_signal,
+            "I_rayleigh": rayleigh,
+            "Mw_over_M0": mw_over_m0,
         },
         metadata={
             "run_id": config.run_id,
@@ -218,9 +392,16 @@ def run_part1(
             "experiment_type": config.experiment_type,
             "smoothing_window": window_loop.resolved_value,
             "smoothing_polyorder": config.smoothing.polyorder,
-            "alpha_calibrated": calibrated,
+            "i_rayleigh_absolute": calibrated,
             "n_excised": state.splice.n_excised,
+            "n_censored": len(state.censored_indices),
+            "baseline_applied": state.baseline_applied,
+            "m0_method": m0.method,
+            "m0_window": f"{m0.index_range[0]}-{m0.index_range[1]}",
+            "m0_sensitivity": f"{m0.sensitivity:.6g}",
         },
+        source_header=state.metadata_lines,
+        channel=channel,
     )
     write_sidecar(state, config, output_csv)
     return state, output_csv
@@ -238,15 +419,55 @@ def run_part2(
         run_id=metadata.get("run_id", config.run_id), source_file=str(processed_csv)
     )
 
-    concentration = frame["concentration_g_per_cm3"].to_numpy(dtype=float)
-    if not np.isfinite(concentration).any():
+    concentration = frame["concentration"].to_numpy(dtype=float)
+    finite_c = concentration[np.isfinite(concentration)]
+    if finite_c.size == 0:
         raise ValueError(
-            "no concentration axis in this file: virial analysis requires a "
-            "dilution_trajectory run"
+            "no concentration axis in this file. The virial expansion is fitted "
+            "against concentration, so it needs a run whose concentration is known "
+            "-- see the OPEN-1 path recorded in the sidecar for why this column is "
+            "blocked."
+        )
+    if finite_c.size > 1 and np.allclose(finite_c, finite_c[0]):
+        raise ValueError(
+            f"every sample sits at one concentration ({finite_c[0]:.6g} g/cm^3). "
+            "That is a fixed-concentration aggregation run: it yields one point on "
+            "the Kc/I_R versus c axis, so there is no slope to fit and no A2. Mw/M0 "
+            "in the emitted CSV is what this run type measures."
         )
 
-    intensity = frame["rayleigh_ratio_cm_inv"].to_numpy(dtype=float)
-    calibrated = str(metadata.get("alpha_calibrated", "False")).lower() == "true"
+    # The intensity axis has two branches, because A2*Mw is calibration-free.
+    # Kc/I = (1/alpha)*(1/Mw + 2*A2*c + ...), so the slope-to-intercept ratio --
+    # and therefore A2*Mw -- is untouched by any constant y-scale. Absolute Mw
+    # and A2 are not, which is why they are withheld on the uncalibrated branch
+    # rather than reported with a silent factor in them.
+    intensity = frame["I_rayleigh"].to_numpy(dtype=float)
+    calibrated = str(metadata.get("i_rayleigh_absolute", "False")).lower() == "true"
+    if not (calibrated and np.isfinite(intensity).any()):
+        calibrated = False
+        intensity = frame["ls8_smoothed"].to_numpy(dtype=float) - (
+            config.solvent_blank_counts
+        )
+        state.paths.append(
+            PathChoice(
+                question="OPEN-2",
+                decision="fit on the smoothed channel",
+                because=(
+                    "I_rayleigh is not on an absolute scale in this file, so the fit "
+                    "runs on the blank-subtracted smoothed channel. A constant "
+                    "y-scale cancels in slope/intercept, so A2*Mw and k_D are "
+                    "unaffected."
+                ),
+                alternatives=["fit on I_rayleigh in cm^-1"],
+                blocked=["Mw", "A2", "A3"],
+            )
+        )
+        state.blocked.extend(["Mw", "A2", "A3"])
+    if not np.isfinite(intensity).any():
+        raise ValueError(
+            "no usable intensity axis: both rayleigh_ratio_cm_inv and "
+            "signal_smoothed are empty"
+        )
 
     k = optics.optical_constant(config.optical)
     state.concentration = concentration
@@ -285,7 +506,7 @@ def run_part2(
             "uncertainty on A2*Mw"
         )
 
-    mw_over_m0 = frame["mw_over_m0"].to_numpy(dtype=float)
+    mw_over_m0 = frame["Mw_over_M0"].to_numpy(dtype=float)
     final = float(np.nanmedian(mw_over_m0[-50:])) if np.isfinite(mw_over_m0).any() else None
 
     state.parameters = derive_parameters(

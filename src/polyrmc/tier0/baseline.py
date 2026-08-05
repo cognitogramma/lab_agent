@@ -1,8 +1,21 @@
-"""Baseline drift correction by amplitude subtraction.
+"""Whole-trace baseline estimators. NOT on the measurement path.
 
-Drift is modeled and subtracted, leaving **every timestamp in place**. This is
-the one point where the obvious alternative is actively wrong: excising a
-drifting stretch would delete the real kinetic signal riding on top of it.
+.. warning::
+   Nothing in this module may be used to correct a run. Both estimators here fit
+   the *whole trace* and have enough freedom to follow a transition, which means
+   they will quietly absorb the kinetics along with the drift -- the exact
+   failure that produces a smooth, plausible, physically wrong result. The
+   permitted models are a polynomial of order at most two, or piecewise-linear
+   interpolation, fitted **only to selected anchor regions** that are barred from
+   intersecting the transition. That is :mod:`polyrmc.tier0.anchors`.
+
+   These are retained for exploratory plotting and for comparison against the
+   anchor-based fit, not for production. An earlier version of the pipeline
+   applied :func:`asls_baseline` automatically whenever drift was detected;
+   that was a defect.
+
+Drift is modeled and subtracted, leaving **every timestamp in place**. Excising
+a drifting stretch would delete the real kinetic signal riding on top of it.
 """
 
 from __future__ import annotations

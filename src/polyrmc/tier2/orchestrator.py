@@ -20,7 +20,7 @@ from polyrmc.provenance import summarize_loop
 from polyrmc.state import RunState
 from polyrmc.tier1.loop import Judge
 
-ExperimentType = Literal["dilution_trajectory", "fixed_concentration"]
+ExperimentType = Literal["acd_dilution", "fixed_conc_aggregation"]
 Confirmer = Callable[["PendingRun"], ExperimentType | None]
 """Returns the confirmed experiment type, or None to skip the run."""
 
@@ -83,7 +83,7 @@ class Orchestrator:
         )
 
         state, csv_path = run_part1(config, channel=channel, judge=self.judge)
-        if run.confirmed_type == "dilution_trajectory":
+        if run.confirmed_type == "acd_dilution":
             part2 = run_part2(csv_path, config, judge=self.judge)
             state.fit = part2.fit
             state.parameters = part2.parameters

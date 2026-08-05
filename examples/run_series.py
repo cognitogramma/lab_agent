@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--judge", choices=["static", "model"], default="static")
     parser.add_argument(
         "--experiment-type",
-        choices=["fixed_concentration", "dilution_trajectory"],
+        choices=["fixed_conc_aggregation", "acd_dilution"],
         required=True,
         help="Supplied, never inferred: a misclassified run yields numbers that "
         "look normal and are wrong.",
@@ -178,8 +178,8 @@ def main(argv: list[str] | None = None) -> int:
             })
             continue
         frame, _meta = read_processed_csv(csv_path)
-        mw = frame["mw_over_m0"].to_numpy(dtype=float)
-        excess = frame["rayleigh_ratio_cm_inv"].to_numpy(dtype=float)
+        mw = frame["Mw_over_M0"].to_numpy(dtype=float)
+        excess = frame["I_rayleigh"].to_numpy(dtype=float)
         window_loop = state.loops["smoothing_window"]
 
         print(f"\n{config.run_id}  (cell {cell}, blank {blank_path.name})")

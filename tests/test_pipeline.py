@@ -22,7 +22,7 @@ def virial_config(virial_argen_file, optical, dilution):
     return RunConfig(
         run_id="virial-test",
         source_file=virial_argen_file,
-        experiment_type="dilution_trajectory",
+        experiment_type="acd_dilution",
         optical=optical,
         dilution=dilution,
         smoothing=SmoothingConfig(min_window=5, max_window=51, n_candidates=5),
@@ -116,6 +116,9 @@ def test_alpha_calibration_does_not_move_a2_mw(virial_config, tmp_path):
     uncalibrated = run_part2(uncalibrated_csv, virial_config, judge=StaticJudge())
 
     calibrated_config = virial_config.model_copy(deep=True)
+    # Calibrating means declaring both that the channel is a count rate and what
+    # the conversion is. Either alone leaves I_rayleigh blocked.
+    calibrated_config.ls_units = "count_rate"
     calibrated_config.optical.alpha = 1.0e9
     _state, calibrated_csv = run_part1(
         calibrated_config, judge=StaticJudge(), output_csv=tmp_path / "cal.csv"
@@ -129,11 +132,17 @@ def test_alpha_calibration_does_not_move_a2_mw(virial_config, tmp_path):
     assert calibrated.parameters.mw == pytest.approx(TRUE_MW, rel=0.10)
 
 
-def test_part2_refuses_a_file_with_no_concentration_axis(run_config, tmp_path):
-    fixed = run_config.model_copy(update={"experiment_type": "fixed_concentration"})
+def test_part2_refuses_a_single_concentration(run_config, tmp_path):
+    """A fixed-concentration run carries a constant c, which is one point on the axis.
+
+    It is not a missing column -- the design puts c0 in the concentration column
+    on this run type -- so the refusal has to name the real reason: one point
+    has no slope, and therefore no A2.
+    """
+    fixed = run_config.model_copy(update={"experiment_type": "fixed_conc_aggregation"})
     _state, csv_path = run_part1(fixed, judge=StaticJudge(), output_csv=tmp_path / "f.csv")
 
-    with pytest.raises(ValueError, match="requires a dilution_trajectory run"):
+    with pytest.raises(ValueError, match="one concentration"):
         run_part2(csv_path, fixed, judge=StaticJudge())
 
 
@@ -166,7 +175,7 @@ def test_orchestrator_runs_once_a_human_confirms(run_config, tmp_path):
     orchestrator = Orchestrator(template=run_config, judge=StaticJudge())
     orchestrator.pending.append(PendingRun(path=run_config.source_file))
 
-    orchestrator.confirm_all(lambda run: "fixed_concentration")
+    orchestrator.confirm_all(lambda run: "fixed_conc_aggregation")
     state = orchestrator.execute(orchestrator.pending[0])
 
     assert state in orchestrator.completed

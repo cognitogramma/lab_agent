@@ -81,14 +81,14 @@ def write_table(path: Path, header: list[str], rows) -> Path:
 
 def export_run(csv_path: Path, out_dir: Path, target: int) -> tuple[Path, Path]:
     frame, meta = read_processed_csv(csv_path)
-    time_s = frame["time_s"].to_numpy(dtype=float)
+    time_s = frame["seconds"].to_numpy(dtype=float)
     columns = {
         "time_h": time_s / 3600.0,
         "time_s": time_s,
-        "raw_ls8": frame["signal_raw"].to_numpy(dtype=float),
-        "smoothed_ls8": frame["signal_smoothed"].to_numpy(dtype=float),
-        "excess_scattering": frame["rayleigh_ratio_cm_inv"].to_numpy(dtype=float),
-        "mw_over_m0": frame["mw_over_m0"].to_numpy(dtype=float),
+        "raw_ls8": frame["ls8"].to_numpy(dtype=float),
+        "smoothed_ls8": frame["ls8_smoothed"].to_numpy(dtype=float),
+        "excess_scattering": frame["I_rayleigh"].to_numpy(dtype=float),
+        "mw_over_m0": frame["Mw_over_M0"].to_numpy(dtype=float),
     }
     header = [label for _name, label in COLUMNS]
     stack = np.column_stack([columns[name] for name, _label in COLUMNS])

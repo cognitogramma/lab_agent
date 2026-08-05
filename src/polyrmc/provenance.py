@@ -33,7 +33,10 @@ def sidecar_path(output_csv: str | Path) -> Path:
 def build_record(state: RunState, config: RunConfig) -> dict[str, Any]:
     """Assemble the full provenance record for a run."""
     return {
-        "schema_version": 1,
+        # 2: adds declarations, declaration_conflicts, paths, blocked, and
+        # censored_indices. Version 1 records predate the path register, so an
+        # absent "paths" key means "not recorded", not "no branches taken".
+        "schema_version": 2,
         "written_at": datetime.now(timezone.utc).isoformat(),
         "run_id": state.run_id,
         "source_file": state.source_file,
@@ -44,8 +47,69 @@ def build_record(state: RunState, config: RunConfig) -> dict[str, Any]:
             "dropped_rows": state.dropped_rows,
             "nd_filter_changes": state.nd_filter_changes,
         },
+        # What a person declared this run to be, and where the data disagreed.
+        # A conflict is recorded whether or not it was resolved -- an
+        # unresolved one is the reason the run should not have been emitted.
+        "declarations": {
+            key: json.loads(d.model_dump_json())
+            for key, d in state.declarations.items()
+        },
+        "declaration_conflicts": [
+            json.loads(c.model_dump_json()) for c in state.declaration_conflicts
+        ],
+        # The branch taken at every question the design leaves open. Without
+        # this, an unanswered question is indistinguishable from an answered one
+        # in the finished record.
+        "paths": [json.loads(p.model_dump_json()) for p in state.paths],
+        "blocked": state.blocked,
+        "censored_indices": state.censored_indices,
         "anomalies": [json.loads(a.model_dump_json()) for a in state.anomalies],
         "splice": json.loads(state.splice.model_dump_json()),
+        # Enough to regenerate exactly what was subtracted, or to see that
+        # nothing was. The candidate set is recorded whether or not any of it
+        # was selected: what was on offer is part of how the decision was made.
+        "baseline": {
+            "transition_region": state.transition_region,
+            "candidates": [
+                json.loads(c.model_dump_json()) for c in state.anchor_candidates
+            ],
+            "anchors_selected": state.anchors_selected,
+            "selected_by": state.anchor_selected_by,
+            "drift_model": (
+                json.loads(state.drift_model.model_dump_json())
+                if state.drift_model
+                else None
+            ),
+            "applied": state.baseline_applied,
+        },
+        # M0 divides every value in the aggregation index, so which window was
+        # used -- and how much the choice mattered -- has to be reconstructible.
+        "m0": (
+            {
+                "method": state.m0.method,
+                "value": state.m0.value,
+                "index_range": list(state.m0.index_range),
+                "n_points": state.m0.n_points,
+                "first_point_value": state.m0.first_point_value,
+                "sensitivity": state.m0.sensitivity,
+                "blocked": state.m0.blocked,
+                "escalations": state.m0.escalations,
+            }
+            if state.m0 is not None
+            else None
+        ),
+        "judge": {
+            "status": state.judge_status,
+            "llm_lane": (
+                json.loads(state.llm_lane.model_dump_json()) if state.llm_lane else None
+            ),
+            "vlm_lane": (
+                json.loads(state.vlm_lane.model_dump_json()) if state.vlm_lane else None
+            ),
+            "lanes_disagreed": state.lanes_disagreed,
+            "fallback_taken": state.fallback_taken,
+        },
+        "execution_history": state.execution_history,
         "loops": {
             name: json.loads(loop.model_dump_json())
             for name, loop in state.loops.items()

@@ -21,7 +21,7 @@ from polyrmc.state import AnomalyRecord, AnomalyType, SpliceRecord
 # would delete real kinetic signal along with the drift.
 _EXCISABLE = {
     AnomalyType.TRANSIENT_SPIKE,
-    AnomalyType.SATURATION,
+    AnomalyType.SATURATION_ARTIFACT,
     AnomalyType.STRUCTURAL_NOISE,
 }
 
@@ -44,7 +44,7 @@ def apply_splice(
         splice.excised_indices.extend(range(start, end + 1))
 
         single_point = record.n_points == 1
-        if single_point and record.anomaly_type is not AnomalyType.SATURATION:
+        if single_point and record.anomaly_type is not AnomalyType.SATURATION_ARTIFACT:
             splice.bridged.append(start)
         else:
             splice.render_breaks.append((start, end))

@@ -21,7 +21,7 @@ def _record(start, end, anomaly_type):
 
 def test_excision_preserves_length_and_index_alignment():
     signal = np.arange(100, dtype=float)
-    records = [_record(40, 44, AnomalyType.SATURATION)]
+    records = [_record(40, 44, AnomalyType.SATURATION_ARTIFACT)]
 
     spliced, splice = apply_splice(signal, records)
 
@@ -47,7 +47,7 @@ def test_single_point_dropout_is_bridged_but_multipoint_breaks_the_line():
     signal = np.ones(50, dtype=float)
     records = [
         _record(10, 10, AnomalyType.TRANSIENT_SPIKE),
-        _record(30, 35, AnomalyType.SATURATION),
+        _record(30, 35, AnomalyType.SATURATION_ARTIFACT),
     ]
 
     _spliced, splice = apply_splice(signal, records)
@@ -59,7 +59,7 @@ def test_single_point_dropout_is_bridged_but_multipoint_breaks_the_line():
 def test_single_point_saturation_still_breaks_the_line():
     """Saturation is never bridged, even when only one sample long."""
     signal = np.ones(20, dtype=float)
-    _spliced, splice = apply_splice(signal, [_record(5, 5, AnomalyType.SATURATION)])
+    _spliced, splice = apply_splice(signal, [_record(5, 5, AnomalyType.SATURATION_ARTIFACT)])
 
     assert splice.bridged == []
     assert splice.render_breaks == [(5, 5)]
@@ -68,7 +68,7 @@ def test_single_point_saturation_still_breaks_the_line():
 def test_render_segments_leaves_a_visible_gap_at_a_break():
     time_s = np.arange(50, dtype=float)
     signal = np.ones(50)
-    _spliced, splice = apply_splice(signal, [_record(20, 25, AnomalyType.SATURATION)])
+    _spliced, splice = apply_splice(signal, [_record(20, 25, AnomalyType.SATURATION_ARTIFACT)])
 
     segments = render_segments(time_s, signal, splice)
 
@@ -82,7 +82,7 @@ def test_interpolation_fills_bridged_points_but_not_excised_stretches():
     signal = np.arange(50, dtype=float)
     records = [
         _record(10, 10, AnomalyType.TRANSIENT_SPIKE),
-        _record(30, 35, AnomalyType.SATURATION),
+        _record(30, 35, AnomalyType.SATURATION_ARTIFACT),
     ]
     spliced, splice = apply_splice(signal, records)
 

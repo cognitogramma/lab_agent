@@ -10,7 +10,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class _Validated(BaseModel):
+    """Config models validate on assignment, not only on construction.
+
+    ``set_config`` exists to refuse an out-of-range value. Without this, pydantic
+    checks a field when the object is built and never again, so a later
+    assignment of polyorder = 9 would be accepted silently -- and the tool whose
+    whole job is to reject it would report success.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -26,7 +39,7 @@ TOLUENE_RAYLEIGH_RATIO = {
 }
 
 
-class OpticalConfig(BaseModel):
+class OpticalConfig(_Validated):
     """Optical constants for the scattering calculation."""
 
     wavelength_nm: float = Field(660.0, gt=0, description="Vacuum wavelength lambda_0.")
@@ -41,7 +54,7 @@ class OpticalConfig(BaseModel):
     )
 
 
-class DilutionConfig(BaseModel):
+class DilutionConfig(_Validated):
     """Automatic continuous dilution trajectory: c(t) = c0 * exp(-Q t / V)."""
 
     c0_g_per_cm3: float = Field(..., gt=0, description="Initial concentration.")
@@ -49,7 +62,7 @@ class DilutionConfig(BaseModel):
     cell_volume_cm3: float = Field(1.0, gt=0, description="Fixed cuvette volume V.")
 
 
-class SmoothingConfig(BaseModel):
+class SmoothingConfig(_Validated):
     """Adaptive Savitzky-Golay settings.
 
     Polynomial order is pinned low deliberately: orders above 3 reproduce noise
@@ -95,20 +108,33 @@ class SmoothingConfig(BaseModel):
         return self
 
 
-class DetectorConfig(BaseModel):
+class DetectorConfig(_Validated):
     """Thresholds for the deterministic anomaly detectors."""
 
     hampel_window: int = Field(31, ge=3, description="Rolling MAD window (odd).")
     hampel_n_sigmas: float = Field(5.0, gt=0)
     derivative_n_sigmas: float = Field(6.0, gt=0)
     saturation_min_run: int = Field(5, ge=2, description="Repeats that count as stuck.")
+    saturation_ceiling: float | None = Field(
+        None,
+        description="Declared full-scale reading of this detector. None means it "
+        "has not been declared, in which case saturation masking is blocked. It "
+        "is never read off the trace: the maximum of a railed trace is the rail, "
+        "so the data would confirm any ceiling it was asked about.",
+    )
+    saturation_run_ceiling: int = Field(
+        2, ge=1, description="Longest saturated run still treated as a transient."
+    )
+    saturation_fraction_ceiling: float = Field(
+        0.01, gt=0, lt=1, description="Saturated fraction above which the run escalates."
+    )
     variance_ratio_threshold: float = Field(6.0, gt=1)
     changepoint_penalty: float | None = Field(
         None, description="PELT penalty; None selects a BIC-style default."
     )
 
 
-class FitRangeConfig(BaseModel):
+class FitRangeConfig(_Validated):
     """Candidate generation for the linear region of Kc/I_R vs c."""
 
     min_points: int = Field(20, ge=5, description="Fewest points in a usable range.")
@@ -117,7 +143,60 @@ class FitRangeConfig(BaseModel):
     min_r_squared: float = Field(0.95, gt=0, lt=1)
 
 
-class LoopConfig(BaseModel):
+class BaselineConfig(_Validated):
+    """Tolerances for anchor-based baseline correction.
+
+    Every one of these is a guard rather than a knob. Smoothing errors are
+    bounded -- the safe band caps the damage and the residual test exposes it.
+    Baseline errors are not: subtracting a curve fitted to anchors that were
+    really part of the kinetics yields a smooth, plausible, physically wrong
+    trace, and no downstream check will flag it. Hence a default of no
+    correction, and a validator that rejects rather than warns.
+    """
+
+    anchor_flatness_tolerance: float = Field(
+        1.0,
+        gt=0,
+        description="Local slope ceiling, as a multiple of the noise-equivalent "
+        "slope. Compared against noise rather than zero, since nothing real is "
+        "exactly flat.",
+    )
+    anchor_variance_factor: float = Field(
+        2.0,
+        gt=0,
+        description="Local scatter ceiling, as a multiple of the global noise "
+        "floor. The design says 'a small factor' without pinning one; this is "
+        "that factor, and it is a calibration target rather than a settled value.",
+    )
+    min_anchors: int = Field(2, ge=1, description="A single anchor cannot define a trend.")
+    min_anchor_duration: float = Field(
+        0.02, gt=0, lt=1, description="Shortest anchor, as a fraction of the run."
+    )
+    min_anchor_coverage: float = Field(
+        0.10, gt=0, le=1, description="Total anchor duration, as a fraction of the run."
+    )
+    transition_edge_fraction: float = Field(
+        0.20,
+        gt=0,
+        lt=1,
+        description="Lag-slope threshold defining the edge of the transition region.",
+    )
+    drift_slope_ceiling: float = Field(
+        0.10,
+        gt=0,
+        lt=1,
+        description="Max drift slope as a fraction of the signal's own maximum. A "
+        "drift model that can move as fast as the kinetics will absorb them.",
+    )
+    drift_impact_ceiling: float = Field(
+        0.20,
+        gt=0,
+        description="Max permitted change in total fold change. A correction that "
+        "materially moves the scientific conclusion requires a human, not a default.",
+    )
+
+
+class LoopConfig(_Validated):
     """Bounds on a tier-1 propose -> judge -> re-propose loop."""
 
     max_iterations: int = Field(3, ge=1, description="Hard cap; then fall back.")
@@ -130,15 +209,17 @@ class LoopConfig(BaseModel):
     )
 
 
-class RunConfig(BaseModel):
+class RunConfig(_Validated):
     """Everything needed to reproduce one processing run."""
 
     run_id: str
     source_file: Path
 
     # Supplied, never inferred: misclassifying a run makes every downstream
-    # number wrong in a way that looks entirely normal.
-    experiment_type: Literal["dilution_trajectory", "fixed_concentration"]
+    # number wrong in a way that looks entirely normal. The two spellings are
+    # the design's, so a config, a declaration, and a fingerprint hard filter
+    # all key on the same strings.
+    experiment_type: Literal["acd_dilution", "fixed_conc_aggregation"]
 
     # The instrument writes ls1..ls16; only ls8 is the measurement. The others
     # are dropped at load and never reach any analysis stage.
@@ -148,8 +229,42 @@ class RunConfig(BaseModel):
     dilution: DilutionConfig | None = None
     smoothing: SmoothingConfig = Field(default_factory=SmoothingConfig)
     detectors: DetectorConfig = Field(default_factory=DetectorConfig)
+    baseline: BaselineConfig = Field(default_factory=BaselineConfig)
     fit_range: FitRangeConfig = Field(default_factory=FitRangeConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
+
+    # Declared at intake, never inferred. None means the question is still open,
+    # which blocks I_rayleigh rather than stalling the run.
+    ls_units: Literal["count_rate", "normalized"] | None = Field(
+        None,
+        description="Whether the scattering channel is a detector count rate or "
+        "already normalised. None blocks the absolute Rayleigh ratio.",
+    )
+    toluene_ref: float | None = Field(
+        None, gt=0, description="Toluene reading on this instrument, same units as the channel."
+    )
+    r_toluene_cm_inv: float | None = Field(
+        None,
+        gt=0,
+        description="Rayleigh ratio of toluene at this wavelength, cm^-1. Declared "
+        "per instrument rather than defaulted: the sources in this project "
+        "disagree by about 26 percent at 660 nm, and the choice scales Mw and A2 "
+        "without disturbing A2*Mw or Mw/M0, so no internal check would catch it.",
+    )
+
+    m0_max_window: float = Field(
+        0.05,
+        gt=0,
+        lt=1,
+        description="Cap on the M0 window as a fraction of the run. It is a "
+        "baseline estimate, not a summary of the early kinetics.",
+    )
+    m0_sensitivity_ceiling: float = Field(
+        0.05,
+        gt=0,
+        description="Max tolerated divergence in total fold change between the "
+        "adaptive-window and first-point definitions of M0.",
+    )
 
     solvent_blank_counts: float = Field(
         0.0, ge=0, description="Buffer blank subtracted from the raw channel."
@@ -160,6 +275,6 @@ class RunConfig(BaseModel):
 
     @model_validator(mode="after")
     def _dilution_required(self) -> RunConfig:
-        if self.experiment_type == "dilution_trajectory" and self.dilution is None:
-            raise ValueError("dilution_trajectory runs require a DilutionConfig")
+        if self.experiment_type == "acd_dilution" and self.dilution is None:
+            raise ValueError("acd_dilution runs require a DilutionConfig")
         return self
