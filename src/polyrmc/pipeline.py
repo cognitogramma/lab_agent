@@ -18,7 +18,14 @@ import numpy as np
 from polyrmc.config import RunConfig
 from polyrmc.io_csv import read_processed_csv, write_processed_csv
 from polyrmc.provenance import write_sidecar
-from polyrmc.state import AnomalyType, DerivedParameters, PathChoice, RunState
+from polyrmc.state import (
+    AnomalyType,
+    Candidate,
+    DerivedParameters,
+    LoopState,
+    PathChoice,
+    RunState,
+)
 from polyrmc.tier0 import optics
 from polyrmc.tier0.argen_io import gain_change_indices, load_argen_file
 from polyrmc.tier0.anchors import propose_anchors
@@ -33,7 +40,7 @@ from polyrmc.tier0.detect import detect_anomalies, noise_floor
 from polyrmc.tier0.m0 import select_m0
 from polyrmc.tier0.dilution import plateau_swing
 from polyrmc.tier0.fit_range import apply_fit_range, sorted_finite
-from polyrmc.tier0.smoothing import savgol_smooth
+from polyrmc.tier0.smoothing import propose_windows, savgol_smooth
 from polyrmc.tier0.splice import apply_splice
 from polyrmc.tier0.virial import build_kc_over_i, derive_parameters, fit_virial
 from polyrmc.tier1.fit_range_selector import select_fit_range
@@ -41,13 +48,20 @@ from polyrmc.tier1.loop import Judge
 from polyrmc.tier1.smoothing_selector import select_smoothing_window
 
 
-def run_part1(
-    config: RunConfig,
-    channel: str | None = None,
-    judge: Judge | None = None,
-    output_csv: str | Path | None = None,
-) -> tuple[RunState, Path]:
-    """Clean one channel and emit the validated CSV plus its provenance sidecar.
+def prepare_run(
+    config: RunConfig, channel: str | None = None
+) -> tuple[RunState, np.ndarray]:
+    """Everything deterministic up to the point a window must be chosen.
+
+    Load, clean, detect, splice, censor, and propose baseline anchors -- then
+    stop. Stopping here is what lets a caller other than :func:`run_part1` make
+    the smoothing judgment: the agent graph needs the safe band *before* it is
+    resolved, so its two lanes can read the same shortlist and disagree about
+    it. A single monolithic function could only ever be driven by the judge
+    wired inside it.
+
+    Returns the state and the mask of samples no judgment may treat as clean
+    signal -- flagged regions and censored samples both.
 
     Parameters
     ----------
@@ -239,25 +253,63 @@ def run_part1(
             "subtracted: select anchors and apply the correction explicitly."
         )
 
-    # The same suspect mask drives landmark detection: a flagged region is not
-    # a kinetic feature smoothing is obliged to preserve.
-    window_loop = select_smoothing_window(
+    state.noise_floor = float(noise_floor(state.spliced_signal))
+    return state, suspect
+
+
+def suspect_mask(state: RunState) -> np.ndarray:
+    """Samples no judgment may treat as clean signal.
+
+    Derived from state rather than passed around, so the window sweep, the
+    anchor proposal and the M0 window cannot drift apart about what counts as
+    suspect -- they all ask the same question of the same record.
+    """
+    mask = np.zeros(state.raw_signal.size, dtype=bool)
+    for record in state.anomalies:
+        mask[record.start_index : record.end_index + 1] = True
+    if state.censored_indices:
+        mask[state.censored_indices] = True
+    return mask
+
+
+def sweep_windows(
+    state: RunState, config: RunConfig, suspect: np.ndarray | None = None
+) -> list[Candidate]:
+    """Compute the safe band and record it, without resolving it.
+
+    Every candidate returned has already passed the whitening and landmark
+    gates, so nothing downstream -- model or human -- can reach a pathological
+    window. Recording the band on the state as an unresolved loop is what lets
+    ``pick_window`` validate a later choice against it.
+    """
+    candidates = propose_windows(
         state.corrected_signal,
-        smoothing_config=config.smoothing,
-        loop_config=config.loop,
-        judge=judge,
-        context={"channel": channel, "run_id": config.run_id},
+        config.smoothing,
         exclude=suspect,
     )
-    state.loops["smoothing_window"] = window_loop
-    if window_loop.resolved_value is None:
-        raise RuntimeError(
-            "smoothing window selection produced no usable option; the trace may be "
-            "too short or too noisy for any window to pass the safety gates"
-        )
-    state.window_length = int(window_loop.resolved_value)
+    state.loops["smoothing_window"] = LoopState(
+        name="smoothing_window",
+        max_iterations=config.loop.max_iterations,
+        candidates_by_iteration=[candidates],
+    )
+    return candidates
+
+
+def finish_run(
+    state: RunState,
+    config: RunConfig,
+    channel: str,
+    window_length: int,
+    output_csv: str | Path | None = None,
+) -> tuple[RunState, Path]:
+    """Smooth at the chosen window, compute the columns, and emit.
+
+    Split from :func:`prepare_run` so that whoever made the smoothing judgment
+    -- the tier-1 loop, the two-lane judge, or a researcher -- hands the same
+    answer to the same code.
+    """
+    state.window_length = int(window_length)
     state.polyorder = config.smoothing.polyorder
-    state.noise_floor = float(noise_floor(state.spliced_signal))
     state.smoothed_signal = savgol_smooth(
         state.corrected_signal, state.window_length, state.polyorder
     )
@@ -301,7 +353,7 @@ def run_part1(
         max_window_fraction=config.m0_max_window,
         sensitivity_ceiling=config.m0_sensitivity_ceiling,
         config=config.baseline,
-        excluded=suspect,
+        excluded=suspect_mask(state),
         transition=state.transition_region,
     )
     state.m0 = m0
@@ -390,7 +442,7 @@ def run_part1(
             "channel": channel,
             "source_file": Path(config.source_file).name,
             "experiment_type": config.experiment_type,
-            "smoothing_window": window_loop.resolved_value,
+            "smoothing_window": state.window_length,
             "smoothing_polyorder": config.smoothing.polyorder,
             "i_rayleigh_absolute": calibrated,
             "n_excised": state.splice.n_excised,
@@ -405,6 +457,40 @@ def run_part1(
     )
     write_sidecar(state, config, output_csv)
     return state, output_csv
+
+
+def run_part1(
+    config: RunConfig,
+    channel: str | None = None,
+    judge: Judge | None = None,
+    output_csv: str | Path | None = None,
+) -> tuple[RunState, Path]:
+    """Clean one channel and emit the validated CSV plus its provenance sidecar.
+
+    The batch path: prepare, let the tier-1 loop resolve the window, finish.
+    The agent drives the same three stages itself, so both routes run identical
+    measurement code and differ only in who makes the judgment.
+    """
+    channel = channel or config.channel
+    state, suspect = prepare_run(config, channel=channel)
+
+    window_loop = select_smoothing_window(
+        state.corrected_signal,
+        smoothing_config=config.smoothing,
+        loop_config=config.loop,
+        judge=judge,
+        context={"channel": channel, "run_id": config.run_id},
+        exclude=suspect,
+    )
+    state.loops["smoothing_window"] = window_loop
+    if window_loop.resolved_value is None:
+        raise RuntimeError(
+            "smoothing window selection produced no usable option; the trace may be "
+            "too short or too noisy for any window to pass the safety gates"
+        )
+    return finish_run(
+        state, config, channel, int(window_loop.resolved_value), output_csv
+    )
 
 
 def run_part2(

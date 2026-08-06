@@ -170,16 +170,27 @@ def test_an_unresolved_conflict_blocks_emit(surface):
         surface.emit_csv("out.csv")
 
 
-def test_resolving_a_conflict_unblocks_emit(surface):
+def test_resolving_a_conflict_unblocks_the_emit_gate(surface):
+    """The gate stops naming the conflict once it carries a recorded reason.
+
+    This surface has no loaded run, so emit still refuses -- for the next reason
+    down the list, not the conflict. That distinction is the point: each blocker
+    is reported on its own rather than collapsed into one failure.
+    """
     surface.state.declaration_conflicts = [
         Conflict(check="experiment_type_vs_trace", declared="a", observed="b")
     ]
     surface.state.window_length = 11
     surface.resolve_conflict(
-        "experiment_type_vs_trace", reason="stirrer was off for the first hour",
+        "experiment_type_vs_trace",
+        reason="stirrer was off for the first hour",
         author="arnold",
     )
-    assert surface.emit_csv("out.csv").ok
+
+    with pytest.raises(Rejected) as error:
+        surface.emit_csv("out.csv")
+    assert "conflict" not in str(error.value)
+    assert "load_run first" in str(error.value)
 
 
 def test_resolving_without_a_reason_is_refused(surface):

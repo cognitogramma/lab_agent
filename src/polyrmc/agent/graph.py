@@ -59,6 +59,7 @@ class Node(str, Enum):
     CHECK_DECLARATIONS = "check_declarations"
     RESOLVE_CONFLICTS = "resolve_conflicts"
     PROCESS = "process"
+    REVIEW_ANOMALIES = "review_anomalies"
     JUDGE_WINDOW = "judge_window"
     REVIEW_ANCHORS = "review_anchors"
     EMIT = "emit"
@@ -117,14 +118,18 @@ class AgentGraph:
         vlm_guard: Resilient | None = None,
         render_plot: Callable[[RunState, list[int]], bytes | None] | None = None,
         system_prompt: str | None = None,
+        output_csv: str | Path | None = None,
     ) -> None:
         self.tools = tools
         self.guard = guard or Resilient()
         self.vlm_guard = vlm_guard or Resilient()
         self.render_plot = render_plot
         self.system_prompt = system_prompt or load_prompt("system.md")
+        self.output_csv = Path(output_csv) if output_csv else None
         self.node = Node.INTAKE
         self.pending: Interrupt | None = None
+        self.emitted: Path | None = None
+        self.checks: list[Any] = []
 
     # --- state ---------------------------------------------------------------
 
@@ -166,6 +171,7 @@ class AgentGraph:
             Node.CHECK_DECLARATIONS: self._check_declarations,
             Node.RESOLVE_CONFLICTS: self._resolve_conflicts,
             Node.PROCESS: self._process,
+            Node.REVIEW_ANOMALIES: self._review_anomalies,
             Node.JUDGE_WINDOW: self._judge_window,
             Node.REVIEW_ANCHORS: self._review_anchors,
             Node.EMIT: self._emit,
@@ -270,13 +276,67 @@ class AgentGraph:
 
     def _process(self) -> Step:
         """The deterministic measurement path. No model call reaches this."""
+        try:
+            self.tools.load_run()
+            band = self.tools.sweep_windows()
+        except (Rejected, ValueError) as error:
+            return Step(
+                Node.PROCESS,
+                Node.PROCESS,
+                self._record(f"processing failed: {error}"),
+                Interrupt(
+                    Node.PROCESS,
+                    str(error),
+                    because="The measurement path refused this run.",
+                ),
+            )
         return Step(
             Node.PROCESS,
-            Node.JUDGE_WINDOW,
+            Node.REVIEW_ANOMALIES,
             self._record(
                 f"processed: {len(self.state.anomalies)} anomaly region(s), "
                 f"{len(self.state.censored_indices)} censored sample(s), "
-                f"{len(self.state.anchor_candidates)} anchor candidate(s)"
+                f"{len(self.state.anchor_candidates)} anchor candidate(s), "
+                f"{len(band)} window(s) in the safe band"
+            ),
+        )
+
+    def _review_anomalies(self) -> Step:
+        """Section 6.4. A region the rules could not name needs a person.
+
+        Deterministic classification handles the unambiguous cases and leaves
+        the rest undecided rather than guessing, because excising something the
+        rules could not name deletes data on a hunch. Those regions surface
+        here instead of silently blocking the emit later.
+        """
+        pending = [a for a in self.state.anomalies if a.decision == "pending"]
+        if not pending:
+            return Step(
+                Node.REVIEW_ANOMALIES,
+                Node.JUDGE_WINDOW,
+                self._record(
+                    f"anomalies: all {len(self.state.anomalies)} region(s) decided"
+                ),
+            )
+        listing = "\n".join(
+            f"  ({a.start_index}, {a.end_index}) {a.n_points} sample(s), "
+            f"flagged by {', '.join(a.detected_by)}"
+            for a in pending[:10]
+        )
+        return Step(
+            Node.REVIEW_ANOMALIES,
+            Node.REVIEW_ANOMALIES,
+            self._record(f"anomalies: {len(pending)} region(s) awaiting a decision"),
+            Interrupt(
+                Node.REVIEW_ANOMALIES,
+                f"{len(pending)} region(s) could not be classified "
+                f"deterministically:\n{listing}",
+                options=[(a.start_index, a.end_index) for a in pending],
+                because=(
+                    "The detectors fired but the rules could not name what these "
+                    "are. Excising a region nobody can name deletes data on a "
+                    "guess, so they stay in the trace until you decide."
+                ),
             ),
         )
 
@@ -383,9 +443,12 @@ class AgentGraph:
         )
 
     def _emit(self) -> Step:
-        path = Path(self.config.source_file).with_suffix(".processed.csv")
+        path = self.output_csv or Path(self.config.source_file).with_suffix(
+            ".processed.csv"
+        )
         try:
-            self.tools.emit_csv(path)
+            result = self.tools.emit_csv(path)
+            self.emitted = Path(result.changed["path"])
         except Rejected as error:
             return Step(
                 Node.EMIT,
@@ -397,14 +460,36 @@ class AgentGraph:
                     because="The emit gate refuses a run that is not fit to leave.",
                 ),
             )
-        return Step(Node.EMIT, Node.VERIFY, self._record(f"emitted {path}"))
+        return Step(Node.EMIT, Node.VERIFY, self._record(f"emitted {self.emitted}"))
 
     def _verify(self) -> Step:
-        return Step(
-            Node.VERIFY,
-            Node.DONE,
-            self._record("verification: run the section 13 checks on the emitted file"),
+        """The agent checks its own work, and a failure is not a footnote."""
+        if self.emitted is None:
+            return Step(
+                Node.VERIFY, Node.DONE, self._record("verification skipped: nothing emitted")
+            )
+        self.checks = self.tools.verify_output(self.emitted)
+        failures = [c for c in self.checks if c.failed]
+        narration = self._record(
+            f"verification: {len(self.checks) - len(failures)} of {len(self.checks)} "
+            f"checks passed or skipped, {len(failures)} failed"
         )
+        if failures:
+            detail = "\n".join(f"  {c.number}. {c.name}: {c.detail}" for c in failures)
+            return Step(
+                Node.VERIFY,
+                Node.VERIFY,
+                narration,
+                Interrupt(
+                    Node.VERIFY,
+                    f"The emitted file fails {len(failures)} check(s):\n{detail}",
+                    because=(
+                        "A failed check names an invariant that broke. It is not a "
+                        "warning to read past."
+                    ),
+                ),
+            )
+        return Step(Node.VERIFY, Node.DONE, narration)
 
     # --- narration -----------------------------------------------------------
 

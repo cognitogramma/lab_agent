@@ -80,6 +80,10 @@ class ToolSurface:
     config: RunConfig
     declarations: DeclarationSet = field(default_factory=DeclarationSet)
 
+    # Samples no judgment may treat as clean signal. Computed at load time and
+    # kept, so anchor validation and the window sweep agree on what is suspect.
+    _suspect: np.ndarray | None = None
+
     # --- read tier: unrestricted, local, cannot change anything --------------
 
     def get_state(self) -> RunState:
@@ -114,6 +118,36 @@ class ToolSurface:
         return list(self.state.paths)
 
     # --- compute tier: deterministic; the caller invokes, never performs -----
+
+    def load_run(self, path: str | Path | None = None) -> RunState:
+        """Ingest, clean, detect, splice, censor, propose anchors.
+
+        Everything deterministic up to the point a smoothing window has to be
+        chosen. Stops there on purpose: the caller makes that judgment.
+        """
+        from polyrmc.pipeline import prepare_run
+
+        if path is not None:
+            self.config.source_file = Path(path)
+        state, suspect = prepare_run(self.config)
+        # Declarations belong to the run, not to the loading of it, so they
+        # survive a reload.
+        state.declarations = dict(self.state.declarations)
+        state.declaration_conflicts = list(self.state.declaration_conflicts)
+        self.state = state
+        self._suspect = suspect
+        return state
+
+    def sweep_windows(self) -> list[Any]:
+        """Compute the safe band. Does not resolve it."""
+        from polyrmc.pipeline import sweep_windows
+
+        if self.state.corrected_signal is None:
+            raise Rejected(
+                "REJECTED. sweep_windows needs a loaded run. Call load_run first."
+            )
+        return sweep_windows(self.state, self.config, self._suspect)
+
 
     def check_declarations(self, metadata: dict[str, str] | None = None) -> list[Conflict]:
         """Test every declaration against the trace, and record what conflicts."""
@@ -358,8 +392,14 @@ class ToolSurface:
             raise Rejected(f"REJECTED. {key} = {value!r} is invalid: {error}") from error
         return Result(True, f"{key} = {value!r}", {key: value})
 
-    def emit_csv(self, path: str | Path) -> Result:
-        """Write the boundary CSV, refusing when the run is not fit to emit."""
+    def emit_csv(self, path: str | Path | None = None) -> Result:
+        """Compute the columns and write the boundary CSV, or refuse.
+
+        The refusal comes first. A run carrying an unresolved conflict, no
+        chosen window, or an undecided anomaly region is not fit to leave, and
+        the gate is here rather than in a prompt so it holds regardless of who
+        or what is driving.
+        """
         reasons: list[str] = []
         if self.state.unresolved_conflicts:
             names = ", ".join(c.check for c in self.state.unresolved_conflicts)
@@ -384,7 +424,21 @@ class ToolSurface:
             )
         if reasons:
             raise Rejected("REJECTED. " + " ".join(reasons))
-        return Result(True, f"ready to emit to {Path(path)}")
+
+        from polyrmc.pipeline import finish_run
+
+        if self.state.corrected_signal is None:
+            raise Rejected(
+                "REJECTED. emit_csv needs a loaded run. Call load_run first."
+            )
+        _state, written = finish_run(
+            self.state,
+            self.config,
+            self.config.channel,
+            int(self.state.window_length),
+            output_csv=path,
+        )
+        return Result(True, f"emitted {written}", {"path": str(written)})
 
     # --- internals -----------------------------------------------------------
 
