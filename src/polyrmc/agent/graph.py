@@ -46,7 +46,9 @@ from polyrmc.agent.lanes import (
     run_llm_lane,
     run_vlm_lane,
 )
+from polyrmc.agent.lab import load_lab_context, system_prompt_with_lab
 from polyrmc.agent.provider import Resilient
+from polyrmc.agent.render import default_render_plot
 from polyrmc.config import RunConfig
 from polyrmc.state import RunState
 from polyrmc.tools import Rejected, ToolSurface
@@ -123,8 +125,16 @@ class AgentGraph:
         self.tools = tools
         self.guard = guard or Resilient()
         self.vlm_guard = vlm_guard or Resilient()
-        self.render_plot = render_plot
-        self.system_prompt = system_prompt or load_prompt("system.md")
+        # Default to a real renderer. Left as None, the visual lane has nothing
+        # to look at and the two-lane judge quietly becomes a one-lane judge
+        # while still reporting a two-lane status.
+        self.render_plot = render_plot or default_render_plot
+        # LAB.md is loaded whole and appended, so the agent carries this lab's
+        # conventions rather than general knowledge of light scattering.
+        self.lab_context, self.lab_path = load_lab_context()
+        self.system_prompt = system_prompt or system_prompt_with_lab(
+            load_prompt("system.md")
+        )
         self.output_csv = Path(output_csv) if output_csv else None
         self.node = Node.INTAKE
         self.pending: Interrupt | None = None
@@ -215,9 +225,12 @@ class AgentGraph:
                     ),
                 ),
             )
+        # Ingest first. The consistency check tests declarations against the
+        # trace, so it has nothing to test until the trace is loaded -- running
+        # it here would skip every check and report the run as consistent.
         return Step(
             Node.INTAKE,
-            Node.CHECK_DECLARATIONS,
+            Node.PROCESS,
             self._record(
                 f"intake: {len(self.state.declarations)} declaration(s) recorded"
             ),
@@ -230,7 +243,7 @@ class AgentGraph:
         except Rejected as error:
             return Step(
                 Node.CHECK_DECLARATIONS,
-                Node.PROCESS,
+                Node.REVIEW_ANOMALIES,
                 self._record(f"declaration check skipped: {error}"),
             )
         if conflicts:
@@ -241,7 +254,7 @@ class AgentGraph:
             )
         return Step(
             Node.CHECK_DECLARATIONS,
-            Node.PROCESS,
+            Node.REVIEW_ANOMALIES,
             self._record("declaration check: the data supports every declaration"),
         )
 
@@ -251,7 +264,7 @@ class AgentGraph:
         if not unresolved:
             return Step(
                 Node.RESOLVE_CONFLICTS,
-                Node.PROCESS,
+                Node.REVIEW_ANOMALIES,
                 self._record("conflicts: all resolved with recorded reasons"),
             )
         detail = "\n".join(
@@ -292,7 +305,7 @@ class AgentGraph:
             )
         return Step(
             Node.PROCESS,
-            Node.REVIEW_ANOMALIES,
+            Node.CHECK_DECLARATIONS,
             self._record(
                 f"processed: {len(self.state.anomalies)} anomaly region(s), "
                 f"{len(self.state.censored_indices)} censored sample(s), "

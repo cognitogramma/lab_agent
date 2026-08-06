@@ -283,6 +283,101 @@ def run_process(args) -> int:
     return _verify(state, csv_path, config)
 
 
+def run_agent(args) -> int:
+    """Drive the agent graph, answering its checkpoints at the terminal.
+
+    The graph pauses wherever a judgment belongs to a person. Nothing here
+    decides on your behalf: an unanswered checkpoint stops the run rather than
+    proceeding on a default.
+    """
+    from polyrmc.agent.graph import GREETING, AgentGraph, Node
+    from polyrmc.state import RunState
+    from polyrmc.tools import Rejected, ToolSurface
+
+    stored = read_json(args.declarations)
+    declarations = {
+        key: Declaration.model_validate(entry) for key, entry in stored.items()
+    }
+    run_id = args.run_id or new_run_id(Path(args.raw).stem[:16])
+    try:
+        config = to_config(
+            declarations,
+            source_file=args.raw,
+            run_id=run_id,
+            channel=args.channel or DEFAULT_CHANNEL,
+        )
+    except MissingDeclarations as error:
+        print(f"cannot start: {error}")
+        return 2
+
+    state = RunState(run_id=run_id, source_file=str(args.raw))
+    state.declarations = declarations
+    tools = ToolSurface(state=state, config=config)
+    for key, declaration in declarations.items():
+        tools.declarations.declarations[key] = declaration
+    tools.declarations.refresh_form()
+
+    graph = AgentGraph(tools=tools, output_csv=args.out)
+    print(GREETING)
+    print(
+        f"lab context: {graph.lab_path or 'NONE FOUND -- running without house conventions'}"
+    )
+
+    interactive = sys.stdin.isatty() and not args.no_prompt
+    for _ in range(40):
+        for step in graph.run():
+            print(f"  {step.narration}")
+        if graph.pending is None:
+            break
+
+        print()
+        print(graph.pending)
+        if not interactive:
+            print("\nStopped at a checkpoint. Re-run without --no-prompt to answer it.")
+            return 2
+
+        if graph.node is Node.REVIEW_ANOMALIES:
+            answer = input("  decide all as [keep/excise] or 'stop': ").strip().lower()
+            if answer not in {"keep", "excise"}:
+                return 2
+            for record in graph.state.anomalies:
+                if record.decision == "pending":
+                    tools.set_decision(
+                        (record.start_index, record.end_index), answer
+                    )
+        elif graph.node is Node.REVIEW_ANCHORS:
+            answer = input("  anchor ids, comma separated, or 'none': ").strip()
+            if answer and answer.lower() != "none":
+                try:
+                    ids = [int(part) for part in answer.split(",")]
+                    tools.select_anchors(ids, selected_by="researcher")
+                    tools.apply_baseline_correction()
+                except (ValueError, Rejected) as error:
+                    print(f"  {error}")
+                    return 2
+            else:
+                graph.state.anchor_selected_by = "researcher"
+        elif graph.node is Node.JUDGE_WINDOW:
+            answer = input("  window: ").strip()
+            try:
+                tools.pick_window(int(answer))
+            except (ValueError, Rejected) as error:
+                print(f"  {error}")
+                return 2
+        else:
+            print("\nThis one needs fixing outside the agent.")
+            return 2
+        graph.resume()
+
+    print()
+    print(graph.narrate())
+    if graph.checks:
+        print("\nverification")
+        print(summarize(graph.checks))
+    failures = [c for c in graph.checks if c.failed]
+    return 3 if failures else (0 if graph.node is Node.DONE else 2)
+
+
 def _report(state, label: str) -> None:
     print(f"\n{label}")
     for loop in state.loops.values():
@@ -315,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="polyrmc", description=__doc__)
     parser.add_argument(
-        "stage", choices=["intake", "process", "part1", "part2", "run"]
+        "stage", choices=["intake", "process", "agent", "part1", "part2", "run"]
     )
     parser.add_argument("--config", help="Run configuration JSON.")
     parser.add_argument("--csv", help="Processed CSV (part2 only).")
@@ -372,10 +467,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         return run_intake(args)
 
-    if args.stage == "process":
+    if args.stage in {"process", "agent"}:
         if not (args.raw and args.declarations):
-            parser.error("process requires --raw and --declarations")
-        return run_process(args)
+            parser.error(f"{args.stage} requires --raw and --declarations")
+        return run_process(args) if args.stage == "process" else run_agent(args)
 
     if not args.config:
         parser.error(f"{args.stage} requires --config")

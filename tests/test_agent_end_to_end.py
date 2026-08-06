@@ -121,10 +121,10 @@ def test_the_two_lane_judge_chose_the_window_that_was_used(graph):
 
     # Advance to the point the band exists, then answer with a real band member.
     graph.node = Node.PROCESS
-    graph.advance()
+    graph.advance()  # load and sweep
     decide_anomalies(graph)
-    graph.advance()  # clears the section 6.4 checkpoint
-    assert graph.node is Node.JUDGE_WINDOW
+    while graph.node is not Node.JUDGE_WINDOW:
+        graph.advance()  # declaration check, then the section 6.4 checkpoint
 
     band = [int(c.value) for c in graph.tools.get_shortlist()]
     assert band

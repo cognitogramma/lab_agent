@@ -143,9 +143,29 @@ def prepare_run(
         run_ceiling=config.detectors.saturation_run_ceiling,
         fraction_ceiling=config.detectors.saturation_fraction_ceiling,
     )
-    state.censored_indices = censoring.censored_indices
+    # Two detectors can find saturation: the ceiling test above, and the
+    # repeated-value test in the anomaly pass. They must agree on what counts as
+    # censored, or a run whose detector railed without a declared ceiling gets
+    # its points excised by one path while the censoring record stays empty --
+    # and the check that no computed column carries a saturated value then
+    # reports "skipped" on a run that plainly saturated.
+    railed = sorted(
+        index
+        for record in state.anomalies
+        if record.anomaly_type is AnomalyType.SATURATION_ARTIFACT
+        for index in range(record.start_index, record.end_index + 1)
+    )
+    state.censored_indices = sorted(set(censoring.censored_indices) | set(railed))
     state.blocked.extend(censoring.blocked)
     state.warnings.extend(censoring.escalations)
+    if railed and not censoring.applied:
+        state.warnings.append(
+            f"{len(railed)} sample(s) were flagged as saturated by the "
+            "repeated-value detector and are treated as censored, even though no "
+            "detector ceiling has been declared. Declaring the ceiling would let "
+            "the ceiling test find railed samples this detector cannot see -- a "
+            "detector held at its rail by a noisy input does not repeat exactly."
+        )
 
     surviving = int(np.isfinite(state.spliced_signal).sum())
     if censoring.applied and surviving < config.smoothing.min_window:
