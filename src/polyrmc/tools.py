@@ -24,7 +24,7 @@ No model client appears anywhere in this module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +116,77 @@ class ToolSurface:
 
     def list_paths(self) -> list[Any]:
         return list(self.state.paths)
+
+    def search_past_runs(
+        self,
+        query: str | None = None,
+        sample_name: str | None = None,
+        runs_dir: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search historical .provenance.json sidecar files from previous research."""
+        from polyrmc.memory.registry import RunRegistry
+
+        dir_to_scan = runs_dir or Path("data/runs")
+        registry = RunRegistry(dir_to_scan)
+        matches = registry.search(query=query, sample_name=sample_name)
+        return [m.to_dict() for m in matches]
+
+    def declared(self, key: str, default: str = "unknown") -> str:
+        """The value a person declared for ``key``, as text.
+
+        ``state.declarations`` holds :class:`~polyrmc.state.Declaration` models,
+        not bare values. Reaching for ``.get(key).get("value")`` treats one as a
+        dict and raises the moment a declaration actually exists -- which is to
+        say, on every real run and on none of the empty ones.
+        """
+        declaration = self.state.declarations.get(key)
+        if declaration is None:
+            return default
+        value = getattr(declaration, "value", declaration)
+        return default if value is None else str(value)
+
+    def compare_current_run(
+        self, runs_dir: str | Path | None = None
+    ) -> dict[str, Any]:
+        """Compare current run results against historical benchmark runs."""
+        from polyrmc.memory.registry import RunRegistry
+
+        dir_to_scan = runs_dir or Path("data/runs")
+        registry = RunRegistry(dir_to_scan)
+        target_summary = {
+            "run_id": self.state.run_id,
+            "sample_name": self.declared("sample_name"),
+            "a2_mw": self.state.parameters.a2_mw if self.state.parameters else None,
+            "k_d": self.state.parameters.k_d if self.state.parameters else None,
+        }
+        return registry.compare(target_summary)
+
+    def search_historical_figures(
+        self,
+        query: str | None = None,
+        method: str | None = None,
+        sample_type: str | None = None,
+        goal: str | None = None,
+        ledger_path: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search labelled figures from past reports, via the figure-labeller ledger.
+
+        The path is supplied by the caller or read from ``POLYRMC_FIGURE_LEDGER``.
+        It used to be a hardcoded absolute path into one person's home
+        directory, and a second call site carried a *different* hardcoded path,
+        so the chat session and the tool surface searched different ledgers and
+        neither said which.
+        """
+        import os
+
+        from polyrmc.memory.registry import FigureRegistry
+
+        target = ledger_path or os.environ.get("POLYRMC_FIGURE_LEDGER")
+        if not target:
+            return []
+        registry = FigureRegistry(target)
+        matches = registry.search(query=query, method=method, sample_type=sample_type, goal=goal)
+        return [asdict(m) for m in matches]
 
     # --- compute tier: deterministic; the caller invokes, never performs -----
 

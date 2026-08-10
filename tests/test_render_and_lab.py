@@ -117,16 +117,25 @@ def test_the_system_prompt_carries_the_lab_context():
     assert "House conventions" in prompt
 
 
-def test_the_graph_defaults_to_a_real_renderer_and_real_lab_context(run_config):
-    from polyrmc.agent.graph import AgentGraph
+def test_the_agent_starts_with_real_lab_context(run_config):
+    """An agent running without LAB.md still refuses the right things -- the
+    guards are in code -- but it does not know this lab's conventions."""
+    from polyrmc.agent.orchestrator import ApprovalPolicy, Orchestrator
+    from polyrmc.agent.toolcall import ScriptedProvider
+    from polyrmc.agent.toolspec import ToolContext
+    from polyrmc.memory.notes import NoteBook
     from polyrmc.tools import ToolSurface
 
-    graph = AgentGraph(
-        tools=ToolSurface(
-            state=RunState(run_id="g", source_file="none"), config=run_config
-        )
+    agent = Orchestrator(
+        context=ToolContext(
+            surface=ToolSurface(
+                state=RunState(run_id="g", source_file="none"), config=run_config
+            ),
+            notes=NoteBook(),
+        ),
+        provider=ScriptedProvider([]),
+        approvals=ApprovalPolicy(),
     )
 
-    assert graph.render_plot is not None, "the visual lane would be blind"
-    assert graph.lab_path is not None
-    assert "House conventions" in graph.system_prompt
+    assert agent.lab_path is not None
+    assert "House conventions" in agent.system_prompt

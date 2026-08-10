@@ -22,3 +22,7 @@ data/figures/*
 # examples/export_for_plotting.py.
 data/plotting/*
 !data/plotting/.gitkeep
+# Agent notes are observations about specific samples and instruments -- lab
+# data by the same standard as everything above, and this repo is public.
+data/memory/*
+!data/memory/.gitkeep

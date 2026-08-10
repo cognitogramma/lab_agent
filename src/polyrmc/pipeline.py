@@ -476,6 +476,41 @@ def finish_run(
         channel=channel,
     )
     write_sidecar(state, config, output_csv)
+
+    # Automatically generate PNG figures alongside the output CSV and sidecar
+    try:
+        import pandas as pd
+        from polyrmc.figures import (
+            plot_derived_quantities,
+            plot_raw_trace,
+            plot_smoothing_detail,
+            plot_virial_fit,
+        )
+
+        fig_dir = output_csv.parent / "figures"
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        df_plot = pd.DataFrame(
+            {
+                "seconds": state.time_s,
+                "ls8": state.spliced_signal,
+                "ls8_smoothed": state.smoothed_signal,
+                "concentration": state.concentration,
+                "I_rayleigh": rayleigh,
+                "Mw_over_M0": mw_over_m0,
+            }
+        )
+        plot_raw_trace(state, config, df_plot, fig_dir / f"{state.run_id}_raw.png")
+        plot_smoothing_detail(
+            state, config, df_plot, fig_dir / f"{state.run_id}_smoothing.png"
+        )
+        plot_derived_quantities(
+            state, config, df_plot, fig_dir / f"{state.run_id}_derived.png"
+        )
+        if state.fit is not None:
+            plot_virial_fit(state, config, fig_dir / f"{state.run_id}_virial.png")
+    except Exception as error:
+        state.warnings.append(f"PNG figure generation skipped: {error}")
+
     return state, output_csv
 
 

@@ -1,17 +1,28 @@
 """Command-line entry point.
 
+    python -m polyrmc.cli agent
+    python -m polyrmc.cli agent --raw data/raw/<file> --declarations run.decl.json
     python -m polyrmc.cli intake --raw data/raw/<file> --declarations run.decl.json
+    python -m polyrmc.cli process --raw data/raw/<file> --declarations run.decl.json
     python -m polyrmc.cli part1 --config run.json
     python -m polyrmc.cli part2 --config run.json --csv data/runs/<run>.csv
     python -m polyrmc.cli run   --config run.json
 
+``agent`` is the interactive session, and the one to reach for by default. The
+model drives: it reads the run, searches what the lab did before, and calls the
+tools it needs, stopping to ask you before anything commits. Started with no
+arguments it is still useful -- searching past experiments does not need a file
+in hand.
+
 ``intake`` is the section 6.0 interview: it asks what the run is, records each
 answer with an author and a timestamp, then checks those answers against the
-trace. It makes no model call and needs no API key.
+trace. ``process`` takes those declarations straight through to a verified CSV.
+Neither makes a model call or needs an API key, and neither has changed: the
+deterministic path is the same path whether a model chose to walk it or a
+researcher typed the command.
 
-The judge defaults to the deterministic :class:`StaticJudge` unless
-``--judge model`` is passed and an API key is configured, so the pipeline is
-fully runnable offline.
+The tier-1 judge defaults to :class:`StaticJudge` unless ``--judge model`` is
+passed, so every non-agent stage is fully runnable offline.
 """
 
 from __future__ import annotations
@@ -283,99 +294,269 @@ def run_process(args) -> int:
     return _verify(state, csv_path, config)
 
 
-def run_agent(args) -> int:
-    """Drive the agent graph, answering its checkpoints at the terminal.
+def _session_config(args) -> tuple[RunConfig, dict[str, Declaration], str]:
+    """Build the run configuration an agent session starts from.
 
-    The graph pauses wherever a judgment belongs to a person. Nothing here
-    decides on your behalf: an unanswered checkpoint stops the run rather than
-    proceeding on a default.
+    Two entry shapes. With ``--raw`` and ``--declarations``, the configuration
+    is *derived* from what a person declared, exactly as ``process`` derives it,
+    so a run cannot be declared one thing and analysed as another. Without them
+    the session still starts -- a researcher asking about past work should not
+    have to nominate a run first -- and the agent reports the run as unloaded
+    until it is pointed at a file.
     """
-    from polyrmc.agent.graph import GREETING, AgentGraph, Node
-    from polyrmc.state import RunState
-    from polyrmc.tools import Rejected, ToolSurface
-
-    stored = read_json(args.declarations)
-    declarations = {
-        key: Declaration.model_validate(entry) for key, entry in stored.items()
-    }
-    run_id = args.run_id or new_run_id(Path(args.raw).stem[:16])
-    try:
+    if args.raw and args.declarations:
+        stored = read_json(args.declarations)
+        declarations = {
+            key: Declaration.model_validate(entry) for key, entry in stored.items()
+        }
+        run_id = args.run_id or new_run_id(Path(args.raw).stem[:16])
         config = to_config(
             declarations,
             source_file=args.raw,
             run_id=run_id,
             channel=args.channel or DEFAULT_CHANNEL,
         )
+        return config, declarations, run_id
+
+    run_id = args.run_id or "session"
+    if args.config:
+        return load_config(args.config), {}, run_id
+
+    # No run nominated. The session still needs a configuration object to hang
+    # the tool surface on, and it is not this command's place to invent one:
+    # dn_dc alone is 0.185 for a protein and 0.150 for a polysaccharide, and a
+    # default would be the exact failure the intake interview exists to prevent
+    # -- a run processed under a physical model nobody chose. The reviewed
+    # example config in the repo is used as scaffolding, and nothing is computed
+    # against it until a real run is loaded.
+    example = Path("examples/run_config.example.json")
+    if example.exists():
+        config = load_config(example)
+        return config.model_copy(update={"run_id": run_id, "source_file": args.raw or "none"}), {}, run_id
+
+    raise MissingDeclarations(
+        "an agent session needs either a run (--raw with --declarations) or a "
+        "configuration (--config). There is no default: dn_dc is 0.185 for a "
+        "protein and 0.150 for a polysaccharide, and guessing it would process "
+        "the run under a physical model nobody chose."
+    )
+
+
+def _ask_approval(tool, call):
+    """Put one commit to the researcher.
+
+    The arguments are shown in full. An approval prompt that hides what is about
+    to change trains the reader to approve without looking, which is worse than
+    not asking at all.
+    """
+    from polyrmc.agent.orchestrator import Approval
+
+    print(f"\n  commit: {call.render()}")
+    print(f"    {tool.description.splitlines()[0]}")
+    try:
+        answer = input("    allow? [y]es / [n]o / [a]lways / reason: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        return Approval(False, "interrupted")
+
+    lowered = answer.lower()
+    if lowered in {"y", "yes"}:
+        return Approval(True)
+    if lowered in {"a", "always"}:
+        return Approval(True, "always allowed this session", remember=True)
+    if lowered in {"n", "no", ""}:
+        return Approval(False, "declined")
+    # Anything else is treated as a refusal with a stated reason, which is more
+    # useful to the agent than a bare no.
+    return Approval(False, answer)
+
+
+REPL_HELP = """\
+  /state            where the run stands
+  /tools            every tool the agent can call
+  /history          what the agent has run this session
+  /runs [query]     search past experiments directly, no model call
+  /notes [query]    read notes filed in earlier sessions
+  /always <tool>    pre-approve a commit tool for this session
+  /auto             approve every commit for the rest of the session
+  /cost             requests and tokens spent on your key this session
+  /help             this list
+  /exit             end the session"""
+
+
+def run_agent(args) -> int:
+    """The agent session: the model drives, and commits go through you.
+
+    Nothing here decides the route. The agent reads the state, calls what it
+    needs, and stops to ask when a change belongs to a person.
+    """
+    from polyrmc.agent.budget import Budget, rates_from_env
+    from polyrmc.agent.orchestrator import (
+        GREETING,
+        ApprovalPolicy,
+        Orchestrator,
+        allow_all,
+        deny_all,
+    )
+    from polyrmc.agent.toolcall import ProviderUnavailable, build_provider
+    from polyrmc.agent.toolspec import (
+        ToolContext,
+        build_registry,
+        default_ledger_path,
+        describe_registry,
+        render_state,
+    )
+    from polyrmc.memory.notes import NoteBook
+    from polyrmc.memory.registry import RunRegistry
+    from polyrmc.state import RunState
+    from polyrmc.tools import ToolSurface
+
+    try:
+        config, declarations, run_id = _session_config(args)
     except MissingDeclarations as error:
         print(f"cannot start: {error}")
+        print(
+            f"\nRun intake first:\n  polyrmc intake --raw {args.raw} "
+            f"--declarations {args.declarations} --author <you>"
+        )
         return 2
 
-    state = RunState(run_id=run_id, source_file=str(args.raw))
-    state.declarations = declarations
-    tools = ToolSurface(state=state, config=config)
+    state = RunState(run_id=run_id, source_file=str(args.raw or "none"))
+    state.declarations = dict(declarations)
+    surface = ToolSurface(state=state, config=config)
     for key, declaration in declarations.items():
-        tools.declarations.declarations[key] = declaration
-    tools.declarations.refresh_form()
+        surface.declarations.declarations[key] = declaration
+    surface.declarations.refresh_form()
 
-    graph = AgentGraph(tools=tools, output_csv=args.out)
-    print(GREETING)
-    print(
-        f"lab context: {graph.lab_path or 'NONE FOUND -- running without house conventions'}"
+    runs_dir = Path(args.runs_dir or "data/runs")
+    notes = NoteBook(args.notes_dir)
+    context = ToolContext(
+        surface=surface,
+        notes=notes,
+        runs_dir=runs_dir,
+        ledger_path=default_ledger_path(),
+        author=str(args.author or "researcher"),
+        output_csv=Path(args.out) if args.out else None,
     )
 
     interactive = sys.stdin.isatty() and not args.no_prompt
-    for _ in range(40):
-        for step in graph.run():
-            print(f"  {step.narration}")
-        if graph.pending is None:
+    policy = ApprovalPolicy(ask=_ask_approval if interactive else deny_all)
+    if args.auto_approve:
+        policy.ask = allow_all
+
+    registry = build_registry()
+    try:
+        provider = build_provider(args.provider, args.model)
+    except ProviderUnavailable as error:
+        print(f"\n{error}")
+        print(
+            "\nThe tools below still work through the slash commands, and every "
+            "deterministic stage is available through `polyrmc process`."
+        )
+        provider = None
+
+    registry_size = len(registry)
+    indexed = len(RunRegistry(runs_dir).summaries)
+    budget = Budget(
+        max_requests=args.budget_requests,
+        max_tokens=args.budget_tokens,
+        rates=rates_from_env(),
+    )
+
+    print(f"\n{GREETING}")
+    if provider is not None:
+        agent = Orchestrator(
+            context=context,
+            provider=provider,
+            approvals=policy,
+            registry=registry,
+            max_steps=args.max_steps,
+            budget=budget,
+        )
+        print(f"model: {provider.name} / {provider.model}   tools: {registry_size}")
+        print(
+            "lab context: "
+            + str(agent.lab_path or "NONE FOUND -- running without house conventions")
+        )
+    else:
+        agent = None
+    print(f"memory: {indexed} past run(s) in {runs_dir}, {len(notes)} note(s)")
+    if not args.auto_approve:
+        print("commits need your approval. /help for commands.\n")
+    else:
+        print("--auto-approve: every commit runs unattended and is recorded.\n")
+
+    if not interactive:
+        if agent is None:
+            return 2
+        question = args.prompt or "Summarise where this run stands and what it needs."
+        try:
+            for event in agent.ask(question):
+                print(event.render())
+        except Exception as error:
+            print(f"the model call failed: {type(error).__name__}: {error}")
+            return 2
+        return 0
+
+    while True:
+        try:
+            line = input("> ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nsession ended.")
             break
+        if not line:
+            continue
 
-        print()
-        print(graph.pending)
-        if not interactive:
-            print("\nStopped at a checkpoint. Re-run without --no-prompt to answer it.")
-            return 2
-
-        if graph.node is Node.REVIEW_ANOMALIES:
-            answer = input("  decide all as [keep/excise] or 'stop': ").strip().lower()
-            if answer not in {"keep", "excise"}:
-                return 2
-            for record in graph.state.anomalies:
-                if record.decision == "pending":
-                    tools.set_decision(
-                        (record.start_index, record.end_index), answer
-                    )
-        elif graph.node is Node.REVIEW_ANCHORS:
-            answer = input("  anchor ids, comma separated, or 'none': ").strip()
-            if answer and answer.lower() != "none":
-                try:
-                    ids = [int(part) for part in answer.split(",")]
-                    tools.select_anchors(ids, selected_by="researcher")
-                    tools.apply_baseline_correction()
-                except (ValueError, Rejected) as error:
-                    print(f"  {error}")
-                    return 2
+        if line.startswith("/"):
+            command, _, rest = line[1:].partition(" ")
+            rest = rest.strip()
+            if command in {"exit", "quit", "q"}:
+                print("session ended.")
+                break
+            if command == "help":
+                print(REPL_HELP)
+            elif command == "state":
+                print(render_state(surface))
+            elif command == "tools":
+                print(describe_registry(registry))
+            elif command == "history":
+                print(agent.narrate() if agent else "(no model session)")
+            elif command == "runs":
+                print(registry["search_past_runs"].handler(context, {"query": rest or None}))
+            elif command == "notes":
+                print(registry["read_notes"].handler(context, {"query": rest or None}))
+            elif command == "always":
+                if rest in registry and registry[rest].mutating:
+                    policy.always.add(rest)
+                    print(f"{rest} approved for this session")
+                else:
+                    print(f"{rest!r} is not a commit tool. /tools lists them.")
+            elif command == "auto":
+                policy.ask = allow_all
+                print("every commit will now run without asking.")
+            elif command == "cost":
+                print(budget.render())
             else:
-                graph.state.anchor_selected_by = "researcher"
-        elif graph.node is Node.JUDGE_WINDOW:
-            answer = input("  window: ").strip()
-            try:
-                tools.pick_window(int(answer))
-            except (ValueError, Rejected) as error:
-                print(f"  {error}")
-                return 2
-        else:
-            print("\nThis one needs fixing outside the agent.")
-            return 2
-        graph.resume()
+                print(f"unknown command {command!r}. /help for the list.")
+            print()
+            continue
 
-    print()
-    print(graph.narrate())
-    if graph.checks:
-        print("\nverification")
-        print(summarize(graph.checks))
-    failures = [c for c in graph.checks if c.failed]
-    return 3 if failures else (0 if graph.node is Node.DONE else 2)
+        if agent is None:
+            print("no model is configured, so there is nothing to ask. /help\n")
+            continue
+
+        try:
+            for event in agent.ask(line):
+                print(event.render())
+        except Exception as error:  # a provider fault must not end the session
+            print(f"  model call failed: {error}")
+        print()
+
+    # Printed unconditionally on the way out, including after an interrupt. A
+    # spend figure that only appears on a clean exit is missing from exactly the
+    # sessions that ran away.
+    if agent is not None:
+        print(budget.render("spent this session"))
+    return 0
 
 
 def _report(state, label: str) -> None:
@@ -405,12 +586,34 @@ def _verify(state, csv_path, config) -> int:
     return 0
 
 
+def run_chat(args) -> int:
+    """``chat`` and ``agent`` are the same session under two names.
+
+    They were different things once: one drove a fixed graph over a nominated
+    run, the other answered questions about past ones. A session that can call
+    tools does both, and keeping two commands would only invite the question of
+    which one to start.
+    """
+    return run_agent(args)
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
 
+    # A Windows console is cp1252 unless told otherwise, and a model's reply
+    # routinely carries a subscript or a Greek letter. Losing a whole session --
+    # including the record of what it just committed -- to an encoding error on
+    # the way to the screen is not a trade worth making, so unrepresentable
+    # characters degrade instead.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # not a reconfigurable stream
+            pass
+
     parser = argparse.ArgumentParser(prog="polyrmc", description=__doc__)
     parser.add_argument(
-        "stage", choices=["intake", "process", "agent", "part1", "part2", "run"]
+        "stage", choices=["intake", "process", "agent", "chat", "part1", "part2", "run"]
     )
     parser.add_argument("--config", help="Run configuration JSON.")
     parser.add_argument("--csv", help="Processed CSV (part2 only).")
@@ -441,8 +644,59 @@ def main(argv: list[str] | None = None) -> int:
         default="static",
         help="Tier-1 judge. 'static' takes the conservative option without a model.",
     )
+    parser.add_argument(
+        "--provider",
+        choices=["gemini", "claude"],
+        default=os.environ.get("POLYRMC_PROVIDER", "gemini"),
+        help="Model that drives the agent session. Gemini is the default and is "
+        "the one keyed in .env; Claude needs ANTHROPIC_API_KEY.",
+    )
+    parser.add_argument(
+        "--model",
+        dest="model",
+        help="Override the provider's model id.",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=12,
+        help="Tool-calling rounds allowed per question before the agent stops "
+        "and reports where it got to.",
+    )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Run commits without asking. Every one is still validated and "
+        "recorded; only the confirmation is skipped.",
+    )
+    parser.add_argument(
+        "--notes-dir",
+        help="Where session notes are kept. Defaults to data/memory.",
+    )
+    parser.add_argument(
+        "--prompt",
+        help="A single question for a non-interactive agent session.",
+    )
+    parser.add_argument(
+        "--budget-requests",
+        type=int,
+        default=int(os.environ.get("POLYRMC_BUDGET_REQUESTS", "0")),
+        help="Stop the session after this many model requests. The Gemini free "
+        "tier rations requests, not tokens, so this is the cap that matters "
+        "there. 0 means no ceiling.",
+    )
+    parser.add_argument(
+        "--budget-tokens",
+        type=int,
+        default=int(os.environ.get("POLYRMC_BUDGET_TOKENS", "0")),
+        help="Stop the session after this many tokens. 0 means no ceiling.",
+    )
     parser.add_argument("--out", help="Where to write the processed CSV.")
     parser.add_argument("--run-id", help="Identifier for this run.")
+    parser.add_argument(
+        "--runs-dir",
+        help="Directory containing historical .provenance.json run sidecars.",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -456,6 +710,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.stage == "chat":
+        return run_chat(args)
+
     if args.stage == "intake":
         if not args.raw:
             parser.error("intake requires --raw")
@@ -467,10 +724,22 @@ def main(argv: list[str] | None = None) -> int:
             )
         return run_intake(args)
 
-    if args.stage in {"process", "agent"}:
+    if args.stage == "process":
         if not (args.raw and args.declarations):
-            parser.error(f"{args.stage} requires --raw and --declarations")
-        return run_process(args) if args.stage == "process" else run_agent(args)
+            parser.error("process requires --raw and --declarations")
+        return run_process(args)
+
+    if args.stage == "agent":
+        # No required arguments. An agent session with no run nominated is a
+        # normal way to start -- searching what the lab did before does not need
+        # a file in hand -- and the agent reports the run as unloaded until it
+        # is pointed at one.
+        if bool(args.raw) != bool(args.declarations):
+            parser.error(
+                "--raw and --declarations go together: a run is analysed under "
+                "what a person declared it to be, never under one without the other"
+            )
+        return run_agent(args)
 
     if not args.config:
         parser.error(f"{args.stage} requires --config")

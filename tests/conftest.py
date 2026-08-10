@@ -35,6 +35,31 @@ def seconds_to_wrapping_mmss(seconds: float) -> str:
     return f"{minutes:02d}:{remainder:04.1f}"
 
 
+@pytest.fixture(autouse=True)
+def isolate_runs_dir(tmp_path, monkeypatch):
+    """Keep synthetic runs out of the lab's real run history.
+
+    Anything that reaches ``run_part1`` without an explicit ``output_csv`` --
+    the tier-2 orchestrator does, correctly, in production -- writes a CSV and
+    a provenance sidecar into ``config.RUNS_DIR``. Under test that is the
+    project's own ``data/runs``, so a full suite deposited a couple of dozen
+    ``run-<hex>`` files into it per invocation.
+
+    That was harmless while the directory was only an output folder. It stopped
+    being harmless once the agent began searching it as memory: "what did this
+    sample do last time" answered partly from fixtures is worse than not
+    answering, because nothing marks which rows were real.
+    """
+    import polyrmc.config as config_module
+
+    # Not tmp_path/"runs": tests that build their own fixture history there
+    # would collide with this one.
+    runs = tmp_path / "_default_runs_out"
+    runs.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(config_module, "RUNS_DIR", runs)
+    return runs
+
+
 @pytest.fixture
 def optical() -> OpticalConfig:
     return OpticalConfig(wavelength_nm=660.0, dn_dc=0.185, solvent_refractive_index=1.333)

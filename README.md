@@ -15,7 +15,7 @@ every number, how it was produced.
 **Models judge, they never compute.**
 
 ```
-tier2/   orchestrator            agentic, human confirms every run
+agent/   orchestrator            the model drives; a person approves every commit
 tier1/   bounded evaluator loops propose (deterministic) → judge (model)
 tier0/   measurement layer       fully local math, zero model dependency
 ```
@@ -33,6 +33,92 @@ construct a candidate** — an out-of-range selection is refused and the
 conservative fallback is taken. Loops are capped. Rejected candidates are logged
 alongside accepted ones, because for fit-range selection *which points were
 excluded* is the scientific claim.
+
+## The model drives
+
+There is no fixed route through the pipeline. The agent sees where the run
+stands, decides what to do next, and calls tools to do it — load the file,
+sweep the windows, search what the same sample did last time, stop and ask.
+The route is the model's; the guarantees are not, because the guarantees were
+never in the route:
+
+**Validation lives in tools, not in prompts.** A prompt asking a model not to do
+something is a request. A tool that rejects it is a guarantee, and it keeps
+working when the model is having a bad day, is a different model, or is replaced
+by a script. Every rejection states what failed, by how much, and what would be
+valid instead, and it goes back to the model as the result of its call.
+
+**Commits need a person.** Every tool is tiered. `read` and `compute` run
+freely — they cannot change a run, and making someone approve each one trains
+them to approve without reading. Every `commit` stops and asks, showing the
+arguments in full.
+
+**The loop is capped and the transcript is generated.** What the agent reports
+having done is rendered from the calls it actually made, so its account cannot
+drift from its behaviour.
+
+```
+polyrmc agent                                    # a session; ask about past work
+polyrmc agent --raw <file> --declarations <f>    # a session over a nominated run
+```
+
+`--provider gemini` (default, uses `GEMINI_API_KEY`) or `--provider claude`
+(needs `ANTHROPIC_API_KEY`). Without a key the session still opens and the
+slash commands still work; the deterministic path never needed a model at all.
+
+Slash commands: `/state`, `/tools`, `/history`, `/runs [query]`, `/notes
+[query]`, `/always <tool>`, `/auto`, `/help`, `/exit`.
+
+## What a session costs
+
+It runs on your key, so it tells you what it spent. Every turn ends with a line,
+and `/cost` gives the session total:
+
+```
+[this turn: 3 request(s), 35,420 in / 320 out  |  session: 3 request(s), ...]
+```
+
+Two figures because two different limits bite.
+
+**Requests** are what the Gemini free tier rations — `gemini-3.6-flash` allows
+5 per minute and **20 per day**, and it counts requests, not tokens. An
+orchestrator spends one per tool round, so a single question can cost six. Three
+questions can exhaust a day. This is the limit you will actually hit; either set
+`--model` to something with a larger allowance, enable billing, or use
+`--provider claude`.
+
+**Tokens** are what a paid key is billed on, and input dominates: the transcript
+is re-sent every round, so a three-round question paid for its history three
+times — 35,420 in against 320 out above. Sessions are expensive because they are
+long, not because the model is verbose. Shorter sessions on focused questions
+cost far less than one long one.
+
+Ceilings, checked *before* each call rather than reported after:
+
+```bash
+--budget-requests 20     # or POLYRMC_BUDGET_REQUESTS
+--budget-tokens 200000   # or POLYRMC_BUDGET_TOKENS
+```
+
+Cost in currency is opt-in — set `POLYRMC_RATES="in=0.30,out=2.50"` (per million
+tokens, from your provider's current pricing). Token counts are measured and are
+always right. A price hardcoded here would be a claim about a vendor's pricing
+page on one particular day: wrong within a quarter, and believed anyway.
+
+## Memory across experiments
+
+The agent searches what this lab has already processed. `data/runs` holds a
+`.provenance.json` sidecar per run, and `search_past_runs`, `get_past_run`, and
+`compare_to_past_runs` read them — so "have we run this sample before, and did
+it look like this?" is a question the agent answers from the record rather than
+from recall.
+
+Alongside that is a notebook it writes to itself (`data/memory/notes.json`):
+the gotchas, quirks, and reasons behind a decision that no sidecar records.
+Notes are kept deliberately apart from run provenance. A sidecar has to stay
+reconstructible from the run itself; a note is somebody's opinion, and filing
+one inside the audit trail would make the audit trail unfalsifiable. Every note
+carries an author, for the same reason every declaration does.
 
 ## Layout
 
@@ -62,6 +148,15 @@ src/polyrmc/
           fit_range_selector, smoothing_selector
 
   tier2/  orchestrator  staging + human confirmation gate
+
+  agent/  orchestrator  the agent loop: model → tool calls → results → repeat
+          toolspec      tool schemas, dispatch, and compact result rendering
+          toolcall      provider-neutral tool-calling transport
+          lanes         the two-lane numeric/visual judge
+          lab           LAB.md, loaded whole into every session
+
+  memory/ registry    index over past runs' provenance sidecars
+          notes       what the agent concluded, kept between sessions
 ```
 
 ## Setup
@@ -77,6 +172,7 @@ judge; the pipeline runs end to end without one.
 ## Run
 
 ```bash
+.venv\Scripts\python.exe -m polyrmc.cli agent
 .venv\Scripts\python.exe -m polyrmc.cli run --config examples/run_config.example.json
 ```
 
@@ -89,7 +185,10 @@ Pro models need a paid Google plan; the free tier returns a zero quota for them.
 .venv\Scripts\python.exe -m pytest
 ```
 
-139 tests, no API key or instrument file required.
+387 tests, no API key or instrument file required. The agent loop is exercised
+end to end against a scripted provider, including the paths that matter most:
+a tool that rejects, a commit the researcher declines, a handler that raises,
+and the step cap holding.
 
 ## The scattering channel
 
