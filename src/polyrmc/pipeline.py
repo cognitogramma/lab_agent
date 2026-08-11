@@ -480,15 +480,11 @@ def finish_run(
     # Automatically generate PNG figures alongside the output CSV and sidecar
     try:
         import pandas as pd
-        from polyrmc.figures import (
-            plot_derived_quantities,
-            plot_raw_trace,
-            plot_smoothing_detail,
-            plot_virial_fit,
-        )
-
+        from polyrmc import figures
+    except Exception as error:  # matplotlib or pandas missing: figures are optional
+        state.warnings.append(f"PNG figures skipped entirely: {error}")
+    else:
         fig_dir = output_csv.parent / "figures"
-        fig_dir.mkdir(parents=True, exist_ok=True)
         df_plot = pd.DataFrame(
             {
                 "seconds": state.time_s,
@@ -499,19 +495,32 @@ def finish_run(
                 "Mw_over_M0": mw_over_m0,
             }
         )
-        plot_raw_trace(state, config, df_plot, fig_dir / f"{state.run_id}_raw.png")
-        plot_smoothing_detail(
-            state, config, df_plot, fig_dir / f"{state.run_id}_smoothing.png"
-        )
-        plot_derived_quantities(
-            state, config, df_plot, fig_dir / f"{state.run_id}_derived.png"
-        )
-        if state.fit is not None:
-            plot_virial_fit(state, config, fig_dir / f"{state.run_id}_virial.png")
-    except Exception as error:
-        state.warnings.append(f"PNG figure generation skipped: {error}")
+        for name, draw in (
+            ("raw", figures.plot_raw_trace),
+            ("smoothing", figures.plot_smoothing_detail),
+            ("derived", figures.plot_derived_quantities),
+        ):
+            _figure(state, name, draw, state, config, df_plot, fig_dir / f"{state.run_id}_{name}.png")
 
     return state, output_csv
+
+
+def _figure(state: RunState, name: str, draw, *args, **kwargs) -> None:
+    """Draw one figure, and let a failure cost only that figure.
+
+    These were once drawn inside a single ``try``, which meant one broken plot
+    took the whole set down with it and said so in a single warning naming only
+    the first thing that failed. That is how this module spent a while importing
+    a ``plot_virial_fit`` that did not exist while silently producing no figures
+    at all. A figure is a presentation artifact: failing to draw one must cost
+    that one figure, and must name it.
+    """
+    try:
+        draw(*args, **kwargs)  # the drawing functions create their own directory
+    except Exception as error:  # noqa: BLE001 - no figure is worth losing a run over
+        state.warnings.append(
+            f"figure '{name}' not written: {type(error).__name__}: {error}"
+        )
 
 
 def run_part1(
@@ -657,6 +666,24 @@ def run_part2(
         state.warnings.append(
             "uncalibrated run: A2*Mw and k_D are reported; Mw, A2, and A3 are not, "
             "since they would silently carry a factor of alpha"
+        )
+
+    # The virial figure is drawn here rather than in finish_run, because this is
+    # where the fit exists. Part 1 has no fit -- it emits the CSV this function
+    # reads -- so the call that used to sit there could never have fired.
+    try:
+        from polyrmc import figures
+    except Exception as error:  # matplotlib missing: the figure is optional
+        state.warnings.append(f"virial figure skipped: {error}")
+    else:
+        fig_dir = Path(processed_csv).parent / "figures"
+        _figure(
+            state,
+            "virial",
+            figures.plot_virial_fit,
+            state,
+            config,
+            fig_dir / f"{state.run_id}_virial.png",
         )
     return state
 

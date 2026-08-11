@@ -447,6 +447,143 @@ def plot_residual_diagnostics(
     return _save(figure, Path(out_path))
 
 
+def plot_virial_fit(
+    state: RunState,
+    config: RunConfig,
+    out_path: str | Path,
+    dpi: int = 130,
+) -> Path:
+    """The virial fit the reported A2*Mw actually came from.
+
+    A2*Mw is slope/(2*intercept), and the intercept sits at infinite dilution --
+    a concentration no run measures. Drawing the extrapolation is the point of
+    this figure: how far past the measured range the intercept lies is what
+    governs whether the number is worth quoting, and a table of coefficients
+    never shows it.
+
+    The lower panel is the fit residual. The range was chosen for linearity, so
+    curvature left behind means the range ran past where the linear term
+    describes the data -- which an R^2 close to 1 will not tell you on its own.
+    """
+    fit = state.fit
+    if fit is None:
+        raise ValueError("no virial fit on this state; run Part 2 before plotting one")
+    if state.concentration is None or state.kc_over_i is None:
+        raise ValueError("the concentration and Kc/I_R axes are needed to draw the fit")
+
+    concentration = np.asarray(state.concentration, dtype=float)
+    kc_over_i = np.asarray(state.kc_over_i, dtype=float)
+    usable = np.isfinite(concentration) & np.isfinite(kc_over_i)
+    concentration, kc_over_i = concentration[usable], kc_over_i[usable]
+    if concentration.size == 0:
+        raise ValueError("no finite (c, Kc/I_R) pairs to draw")
+
+    def model(x: np.ndarray) -> np.ndarray:
+        value = fit.intercept + fit.slope * x
+        if fit.order == 2 and fit.quadratic_coeff is not None:
+            value = value + fit.quadratic_coeff * np.square(x)
+        return value
+
+    inside = (concentration >= fit.c_min) & (concentration <= fit.c_max)
+    calibrated = bool(state.parameters.calibrated) if state.parameters else False
+
+    figure, (main, residual_axis) = plt.subplots(
+        2,
+        1,
+        figsize=(9.5, 6.8),
+        dpi=dpi,
+        gridspec_kw={"height_ratios": [1.9, 1.0], "hspace": 0.30},
+    )
+    figure.patch.set_facecolor("white")
+
+    _style(main)
+    main.scatter(
+        concentration[~inside],
+        kc_over_i[~inside],
+        s=5,
+        facecolors="none",
+        edgecolors=RAW,
+        linewidths=0.5,
+        zorder=2,
+        label=f"outside the fit range ({int((~inside).sum()):,})",
+    )
+    main.scatter(
+        concentration[inside],
+        kc_over_i[inside],
+        s=6,
+        color=INK,
+        alpha=0.65,
+        zorder=3,
+        label=f"fitted ({int(inside.sum()):,} points, {fit.n_points:,} after thinning)",
+    )
+
+    # Solid where the fit is supported by data, dashed back to c = 0 where it is
+    # not. The intercept is an extrapolation and is drawn as one.
+    supported = np.linspace(fit.c_min, fit.c_max, 200)
+    main.plot(supported, model(supported), color=ACCENT, linewidth=1.6, zorder=4,
+              label=f"order-{fit.order} fit, R$^2$ = {fit.r_squared:.4f}")
+    if fit.c_min > 0:
+        extrapolated = np.linspace(0.0, fit.c_min, 100)
+        main.plot(
+            extrapolated,
+            model(extrapolated),
+            color=ACCENT,
+            linewidth=1.2,
+            linestyle="--",
+            alpha=0.75,
+            zorder=4,
+            label="extrapolation to infinite dilution",
+        )
+    main.scatter([0.0], [fit.intercept], s=42, marker="D", color=ACCENT, zorder=5)
+    main.annotate(
+        f"intercept = {fit.intercept:.5g} +/- {fit.intercept_stderr:.2g}"
+        + (f"\n1/M$_w$, M$_w$ = {state.parameters.mw:.4g} g/mol" if calibrated and state.parameters and state.parameters.mw else ""),
+        xy=(0.0, fit.intercept),
+        xytext=(10, 12),
+        textcoords="offset points",
+        fontsize=8,
+        color=ACCENT,
+    )
+
+    main.set_ylabel(
+        "Kc/I$_R$ (mol/g)" if calibrated else "Kc/I (relative, alpha not calibrated)",
+        fontsize=9,
+        color=INK,
+    )
+    main.set_title(
+        f"{state.run_id}   .   virial fit   .   "
+        f"A$_2$M$_w$ = {fit.a2_mw:.5g} cm$^3$/g"
+        + ("" if calibrated else "   .   calibration-free, M$_w$ and A$_2$ withheld"),
+        fontsize=9.5,
+        color=INK,
+        loc="left",
+        pad=10,
+    )
+    main.legend(frameon=False, fontsize=7.5, labelcolor=MUTED, loc="best")
+
+    _style(residual_axis)
+    residuals = kc_over_i[inside] - model(concentration[inside])
+    residual_axis.scatter(
+        concentration[inside], residuals, s=5, color=MUTED, alpha=0.7, zorder=3
+    )
+    residual_axis.axhline(0.0, color=ACCENT, linewidth=1.0, linestyle="--", zorder=4)
+    residual_axis.set_xlabel("concentration (g/cm$^3$)", fontsize=9, color=INK)
+    residual_axis.set_ylabel("fit residual", fontsize=9, color=INK)
+    if residuals.size:
+        residual_axis.set_title(
+            f"residual over the fitted range {fit.c_min:.4g}-{fit.c_max:.4g} g/cm$^3$   .   "
+            f"sigma = {float(np.std(residuals)):.3g}   .   "
+            "structure here means the range outran the linear term",
+            fontsize=8.5,
+            color=MUTED,
+            loc="left",
+            pad=6,
+        )
+    residual_axis.set_xlim(main.get_xlim())
+
+    return _save(figure, Path(out_path))
+
+
 # ---------------------------------------------------------------------------
 # Cross-run comparison
 # ---------------------------------------------------------------------------

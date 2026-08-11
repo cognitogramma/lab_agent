@@ -379,8 +379,113 @@ REPL_HELP = """\
   /always <tool>    pre-approve a commit tool for this session
   /auto             approve every commit for the rest of the session
   /cost             requests and tokens spent on your key this session
+  /providers        which model providers are keyed on this machine
   /help             this list
   /exit             end the session"""
+
+
+def _persist_key(spec, value: str, env_path: Path = Path(".env")) -> bool:
+    """Write one key into ``.env``, replacing any existing line for it.
+
+    ``.env`` is gitignored, which is the only reason offering to write here is
+    defensible. The file is rewritten whole rather than appended to, so signing
+    in twice leaves one line rather than two that disagree.
+    """
+    try:
+        lines = (
+            env_path.read_text(encoding="utf-8-sig").splitlines()
+            if env_path.exists()
+            else []
+        )
+        kept = [
+            line
+            for line in lines
+            if not line.strip().startswith(f"{spec.canonical_key}=")
+        ]
+        kept.append(f"{spec.canonical_key}={value}")
+        env_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        return True
+    except OSError as error:
+        print(f"  could not write {env_path}: {error}")
+        return False
+
+
+def _sign_in(spec) -> bool:
+    """Take a key for one provider at the terminal.
+
+    Read with ``getpass`` so the key never reaches the scrollback, and never
+    echoed back for confirmation. Offering to store it is a separate question
+    from accepting it, because a shared or teaching machine is a normal place to
+    run this and a key written there outlives the session.
+    """
+    from getpass import getpass
+
+    print(f"\n{spec.name} needs a key you supply. Get one from {spec.key_url}")
+    print(f"It will be read as {spec.canonical_key}. Leave blank to skip.")
+    try:
+        value = getpass(f"  paste {spec.canonical_key}: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return False
+    if not value:
+        return False
+
+    os.environ[spec.canonical_key] = value
+    try:
+        answer = input("  save it to .env for next time? [y/N] ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        # The key is already accepted for this session. Losing the terminal
+        # while deciding whether to store it should not also lose the session.
+        answer = ""
+        print()
+    if answer in {"y", "yes"}:
+        if _persist_key(spec, value):
+            print(f"  written to .env ({spec.canonical_key}). .env is gitignored.")
+    else:
+        print("  kept for this session only.")
+    return True
+
+
+def _resolve_provider(args, interactive: bool):
+    """Pick the brain for this session, offering to take a key if none is set.
+
+    Order: what was asked for, else whatever is already keyed, else -- at a
+    terminal -- ask. A researcher who has not chosen should not have to know
+    which provider this package happens to list first.
+    """
+    from polyrmc.agent.toolcall import (
+        SPECS,
+        ProviderUnavailable,
+        build_provider,
+        describe_providers,
+        key_for,
+        keyed_providers,
+    )
+
+    kind = args.provider or (keyed_providers() or [None])[0]
+
+    if kind is None:
+        if not interactive:
+            raise ProviderUnavailable(
+                "No model provider is keyed on this machine. This is a "
+                "buy-your-own-tokens setup: pick a provider, get a key, and set "
+                "it.\n" + describe_providers()
+            )
+        print("\nNo provider is keyed yet. You supply the tokens for this agent.")
+        print(describe_providers())
+        choice = input(f"  which provider? [{'/'.join(SPECS)}] ").strip().lower()
+        if choice not in SPECS:
+            raise ProviderUnavailable(
+                f"{choice!r} is not one of {sorted(SPECS)}. Start again once you "
+                "have a key."
+            )
+        kind = choice
+
+    spec = SPECS.get(kind)
+    if spec is not None and not key_for(spec) and interactive:
+        _sign_in(spec)
+
+    return build_provider(kind, args.model)
 
 
 def run_agent(args) -> int:
@@ -397,7 +502,7 @@ def run_agent(args) -> int:
         allow_all,
         deny_all,
     )
-    from polyrmc.agent.toolcall import ProviderUnavailable, build_provider
+    from polyrmc.agent.toolcall import ProviderCallFailed, ProviderUnavailable
     from polyrmc.agent.toolspec import (
         ToolContext,
         build_registry,
@@ -445,7 +550,7 @@ def run_agent(args) -> int:
 
     registry = build_registry()
     try:
-        provider = build_provider(args.provider, args.model)
+        provider = _resolve_provider(args, interactive)
     except ProviderUnavailable as error:
         print(f"\n{error}")
         print(
@@ -492,6 +597,10 @@ def run_agent(args) -> int:
         try:
             for event in agent.ask(question):
                 print(event.render())
+        except ProviderCallFailed as error:
+            print(f"\n{error}")
+            print(budget.render("spent before the failure"))
+            return 2
         except Exception as error:
             print(f"the model call failed: {type(error).__name__}: {error}")
             return 2
@@ -535,6 +644,12 @@ def run_agent(args) -> int:
                 print("every commit will now run without asking.")
             elif command == "cost":
                 print(budget.render())
+            elif command == "providers":
+                from polyrmc.agent.toolcall import describe_providers
+
+                print(describe_providers())
+                if provider is not None:
+                    print(f"\nthis session: {provider.name} / {provider.model}")
             else:
                 print(f"unknown command {command!r}. /help for the list.")
             print()
@@ -547,8 +662,21 @@ def run_agent(args) -> int:
         try:
             for event in agent.ask(line):
                 print(event.render())
-        except Exception as error:  # a provider fault must not end the session
-            print(f"  model call failed: {error}")
+        except ProviderCallFailed as error:
+            # The brain is gone, so the session is over. Tool faults are handled
+            # inside the orchestrator and fed back for the model to correct;
+            # nothing can correct a provider that will not answer, and looping
+            # here would re-ask on a key that just refused. There is no failover
+            # onto a second provider on purpose: these are the researcher's own
+            # tokens, and moving their session to another of their keys is a
+            # spending decision that is theirs to make.
+            print(f"\n{error}")
+            print("\nsession ended. Nothing committed is lost -- /state on the next")
+            print("session shows where this run stands, and `polyrmc process` runs")
+            print("the whole deterministic path with no model at all.")
+            break
+        except Exception as error:  # a bug here must not cost the transcript
+            print(f"  model call failed: {type(error).__name__}: {error}")
         print()
 
     # Printed unconditionally on the way out, including after an interrupt. A
@@ -646,15 +774,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--provider",
-        choices=["gemini", "claude"],
-        default=os.environ.get("POLYRMC_PROVIDER", "gemini"),
-        help="Model that drives the agent session. Gemini is the default and is "
-        "the one keyed in .env; Claude needs ANTHROPIC_API_KEY.",
+        choices=["gemini", "claude", "openai"],
+        default=os.environ.get("POLYRMC_PROVIDER") or None,
+        help="Brain that drives the agent session, on your own key. Defaults to "
+        "whichever provider is keyed on this machine. GOOGLE_API_KEY or "
+        "GEMINI_API_KEY for gemini, ANTHROPIC_API_KEY for claude, "
+        "OPENAI_API_KEY for openai.",
     )
     parser.add_argument(
         "--model",
         dest="model",
-        help="Override the provider's model id.",
+        help="Override the provider's model id. The defaults are pins and can go "
+        "stale; this is how you move off one without editing the package.",
     )
     parser.add_argument(
         "--max-steps",

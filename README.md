@@ -62,12 +62,42 @@ polyrmc agent                                    # a session; ask about past wor
 polyrmc agent --raw <file> --declarations <f>    # a session over a nominated run
 ```
 
-`--provider gemini` (default, uses `GEMINI_API_KEY`) or `--provider claude`
-(needs `ANTHROPIC_API_KEY`). Without a key the session still opens and the
-slash commands still work; the deterministic path never needed a model at all.
-
 Slash commands: `/state`, `/tools`, `/history`, `/runs [query]`, `/notes
-[query]`, `/always <tool>`, `/auto`, `/help`, `/exit`.
+[query]`, `/always <tool>`, `/auto`, `/providers`, `/help`, `/exit`.
+
+## Bring your own tokens
+
+**You supply the brain.** This package ships no key and brokers no model access.
+What it is worth is below the model — the ARGEN ingest, the declarations that
+configure a run, the provenance sidecars, the checks that catch a plausible
+wrong number — and every bit of that runs with no model at all. Which brain
+drives a session is your purchase, and you can change it per session:
+
+| `--provider` | key | where |
+|---|---|---|
+| `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | <https://aistudio.google.com/apikey> |
+| `claude` | `ANTHROPIC_API_KEY` | <https://console.anthropic.com/settings/keys> |
+| `openai` | `OPENAI_API_KEY` | <https://platform.openai.com/api-keys> |
+
+With no `--provider`, the session uses whichever one you have keyed. With no key
+at all it asks for one at the prompt, reads it without echoing it, and offers to
+save it to `.env` (which is gitignored). `/providers` shows what is keyed.
+Decline and the session still opens: the slash commands work and the whole
+deterministic path is there, because it never needed a model.
+
+These are **API keys, billed per token**. A ChatGPT Plus/Pro or Claude Pro
+subscription is a separate product and does not grant API access — those are
+spent through the vendors' own apps, not here.
+
+Model pins (`--model`, or `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `OPENAI_MODEL`)
+exist so a run can record which brain judged it. They go stale; a rejected id is
+reported as a rejected id, with the override named.
+
+**A provider that fails ends the session.** Out of quota, dead key, stale model
+id — it says which, prints what was spent, and stops. It does not fail over onto
+another of your keys, because that is your money and the decision to spend it is
+yours. Nothing committed is lost; the next session's `/state` shows where the
+run stands.
 
 ## What a session costs
 
@@ -80,12 +110,12 @@ and `/cost` gives the session total:
 
 Two figures because two different limits bite.
 
-**Requests** are what the Gemini free tier rations — `gemini-3.6-flash` allows
-5 per minute and **20 per day**, and it counts requests, not tokens. An
-orchestrator spends one per tool round, so a single question can cost six. Three
-questions can exhaust a day. This is the limit you will actually hit; either set
-`--model` to something with a larger allowance, enable billing, or use
-`--provider claude`.
+**Requests** are what a free tier rations — Gemini's, for instance, counts
+requests rather than tokens and allows only a few dozen a day. An orchestrator
+spends one per tool round, so a single question can cost six, and three
+questions can exhaust a day. This is the limit you will actually hit on a free
+key; set `--model` to something with a larger allowance, enable billing on the
+account, or switch `--provider` to a key you have paid for.
 
 **Tokens** are what a paid key is billed on, and input dominates: the transcript
 is re-sent every round, so a three-round question paid for its history three
@@ -180,6 +210,10 @@ judge; the pipeline runs end to end without one.
 and makes no network calls. `--judge model` uses the pinned Gemini model
 (`gemini-3.6-flash`) and requires `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 Pro models need a paid Google plan; the free tier returns a zero quota for them.
+
+Unlike the agent session, the tier-1 judge is **still Gemini-only** — it predates
+the provider table and has not been moved onto it. `--judge static` is the
+offline path either way, and it is what every test runs.
 
 ```bash
 .venv\Scripts\python.exe -m pytest
