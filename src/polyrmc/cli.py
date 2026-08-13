@@ -43,6 +43,7 @@ from polyrmc.intake import (
     render_question,
     to_config,
 )
+from polyrmc import paths
 from polyrmc.pipeline import new_run_id, run_part1, run_part2
 from polyrmc.provenance import summarize_loop
 from polyrmc.state import Declaration
@@ -77,9 +78,13 @@ def make_judge(kind: str, decision_name: str, config: RunConfig) -> Judge:
     # `--judge model` unusable no matter how the key was set.
     if not (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")):
         raise SystemExit(
-            "--judge model requires GOOGLE_API_KEY (or GEMINI_API_KEY). Set it in "
-            ".env, or use --judge static to run the deterministic conservative rule "
-            "instead."
+            "--judge model requires GOOGLE_API_KEY (or GEMINI_API_KEY), which you "
+            "supply.\n"
+            "  polyrmc setup            take a key and store it\n"
+            "  --judge static           the deterministic conservative rule, no key\n"
+            "Get a Gemini key from https://aistudio.google.com/apikey\n"
+            "Note this judge is Gemini-only: it predates the --provider table that "
+            "the agent session uses, and has not been moved onto it."
         )
     return ModelJudge(decision_name, config=config.loop)
 
@@ -329,16 +334,18 @@ def _session_config(args) -> tuple[RunConfig, dict[str, Declaration], str]:
     # -- a run processed under a physical model nobody chose. The reviewed
     # example config in the repo is used as scaffolding, and nothing is computed
     # against it until a real run is loaded.
-    example = Path("examples/run_config.example.json")
+    example = paths.example_config()
     if example.exists():
         config = load_config(example)
         return config.model_copy(update={"run_id": run_id, "source_file": args.raw or "none"}), {}, run_id
 
     raise MissingDeclarations(
-        "an agent session needs either a run (--raw with --declarations) or a "
-        "configuration (--config). There is no default: dn_dc is 0.185 for a "
-        "protein and 0.150 for a polysaccharide, and guessing it would process "
-        "the run under a physical model nobody chose."
+        [
+            "a run (--raw with --declarations), or a configuration (--config). "
+            "There is no default: dn_dc is 0.185 for a protein and 0.150 for a "
+            "polysaccharide, and guessing it would process the run under a "
+            "physical model nobody chose"
+        ]
     )
 
 
@@ -384,13 +391,19 @@ REPL_HELP = """\
   /exit             end the session"""
 
 
-def _persist_key(spec, value: str, env_path: Path = Path(".env")) -> bool:
+def _persist_key(spec, value: str, env_path: Path | None = None) -> bool:
     """Write one key into ``.env``, replacing any existing line for it.
 
     ``.env`` is gitignored, which is the only reason offering to write here is
     defensible. The file is rewritten whole rather than appended to, so signing
     in twice leaves one line rather than two that disagree.
+
+    The path comes from :func:`polyrmc.paths.env_file`, not from the working
+    directory. Writing to ``Path(".env")`` put the key wherever the researcher
+    happened to be standing, while the loader looked beside the package -- so a
+    key saved from a data folder was silently never read again.
     """
+    env_path = Path(env_path) if env_path is not None else paths.env_file()
     try:
         lines = (
             env_path.read_text(encoding="utf-8-sig").splitlines()
@@ -431,8 +444,9 @@ def _sign_in(spec) -> bool:
         return False
 
     os.environ[spec.canonical_key] = value
+    env_path = paths.env_file()
     try:
-        answer = input("  save it to .env for next time? [y/N] ").strip().lower()
+        answer = input(f"  save it to {env_path} for next time? [y/N] ").strip().lower()
     except (KeyboardInterrupt, EOFError):
         # The key is already accepted for this session. Losing the terminal
         # while deciding whether to store it should not also lose the session.
@@ -440,7 +454,7 @@ def _sign_in(spec) -> bool:
         print()
     if answer in {"y", "yes"}:
         if _persist_key(spec, value):
-            print(f"  written to .env ({spec.canonical_key}). .env is gitignored.")
+            print(f"  written to {env_path} ({spec.canonical_key}). It is gitignored.")
     else:
         print("  kept for this session only.")
     return True
@@ -488,6 +502,141 @@ def _resolve_provider(args, interactive: bool):
     return build_provider(kind, args.model)
 
 
+def _check_key(kind: str, model: str | None = None) -> tuple[bool, str]:
+    """Spend one small call to find out whether a key actually works.
+
+    Worth the token. The alternative is telling a researcher their key is
+    stored, letting them start a session, and having the first real question
+    fail on a key that was pasted short or belongs to another provider -- by
+    which point the failure looks like the agent rather than the setup.
+
+    The prompt is deliberately tiny, and no tools are bound: this is checking
+    that a key opens a door, not that a model can think.
+    """
+    from polyrmc.agent.toolcall import (
+        Message,
+        ProviderCallFailed,
+        ProviderUnavailable,
+        build_provider,
+    )
+
+    try:
+        provider = build_provider(kind, model)
+    except ProviderUnavailable as error:
+        return False, str(error)
+
+    try:
+        provider.converse(
+            "Answer with the single word: ok",
+            [Message(role="user", text="ping")],
+            [],
+        )
+    except ProviderCallFailed as error:
+        return False, str(error)
+    except Exception as error:  # noqa: BLE001 - any fault here is a failed check
+        return False, f"{type(error).__name__}: {error}"
+    return True, f"{provider.name} / {provider.model}"
+
+
+def run_setup(args) -> int:
+    """Take a key and store it, before anything else is attempted.
+
+    This exists because the sign-in prompt it wraps was unreachable. It lived
+    inside the agent session, behind the check that a run had been declared, so
+    the first thing a new user saw was a demand for declarations about an
+    experiment they had not loaded -- and nothing anywhere told them a key was
+    needed, or where to get one. A thing you must do first has to be runnable
+    first.
+
+    Needs no run, no config, and no declarations, and it is the one command in
+    this package that is allowed to make a model call without a run in hand.
+    """
+    from polyrmc.agent.toolcall import SPECS, key_for
+
+    interactive = sys.stdin.isatty() and not args.no_prompt
+    env_path = paths.env_file()
+
+    print("\nPolyRMC needs a model provider. You supply the tokens.")
+    print(f"project root: {paths.project_root()}")
+    print(f"keys are read from and written to: {env_path}\n")
+
+    order = list(SPECS)
+    for index, name in enumerate(order, start=1):
+        spec = SPECS[name]
+        status = "keyed" if key_for(spec) else "no key"
+        print(f"  {index}  {spec.name:<8} {status:<7} {spec.key_url}")
+
+    # The measurement path is the part that must never depend on this, and a
+    # researcher who wanted to process data rather than talk to a model should
+    # be told they are already finished.
+    print(
+        "\nNone of this is needed for `polyrmc intake`, `polyrmc process`, or "
+        "`--judge static`,\nwhich run the whole measurement path with no model "
+        "and no key."
+    )
+
+    if not interactive:
+        keyed = [name for name in order if key_for(SPECS[name])]
+        print(f"\nkeyed here: {', '.join(keyed) if keyed else 'none'}")
+        if not keyed:
+            print("Run `polyrmc setup` at a terminal to paste one in.")
+            return 1
+        return 0
+
+    choice = (args.provider or "").strip().lower()
+    if not choice:
+        try:
+            choice = input(f"\n  which provider? [1-{len(order)}] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print("\nnothing changed.")
+            return 1
+    if choice.isdigit() and 1 <= int(choice) <= len(order):
+        choice = order[int(choice) - 1]
+    if choice not in SPECS:
+        print(f"\n{choice!r} is not one of {order}. Nothing changed.")
+        return 1
+
+    spec = SPECS[choice]
+    replacing = bool(key_for(spec))
+    if replacing:
+        print(f"\n{spec.name} is already keyed ({spec.canonical_key}).")
+        try:
+            answer = input("  replace it? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            answer = ""
+            print()
+        replacing = answer in {"y", "yes"}
+        if not replacing:
+            print("  keeping the key already set.")
+
+    # Asked for whenever there is no key, and whenever the researcher chose to
+    # replace one. Keeping an existing key is the only path that skips straight
+    # to the check.
+    if not key_for(spec) or replacing:
+        if not _sign_in(spec):
+            print("\nno key taken. Nothing changed.")
+            return 1
+
+    print("\n  checking...", end=" ", flush=True)
+    ok, detail = _check_key(spec.name, args.model)
+    if ok:
+        print(f"ok ({detail})")
+        print("\nReady. Start a session with `polyrmc agent`.")
+        return 0
+
+    # A failed check does not unwrite the key. The paste may be fine and the
+    # provider merely down, and making a researcher re-enter a 40-character
+    # secret to find that out is a worse trade than leaving a key that says
+    # plainly it did not answer.
+    print("failed")
+    print(f"\n{detail}")
+    print(
+        f"\nThe key is still stored in {env_path}. Fix what the provider named "
+        "and run\n`polyrmc setup` again, or pick another provider."
+    )
+    return 1
+
+
 def run_agent(args) -> int:
     """The agent session: the model drives, and commits go through you.
 
@@ -532,7 +681,7 @@ def run_agent(args) -> int:
         surface.declarations.declarations[key] = declaration
     surface.declarations.refresh_form()
 
-    runs_dir = Path(args.runs_dir or "data/runs")
+    runs_dir = Path(args.runs_dir) if args.runs_dir else paths.runs_dir()
     notes = NoteBook(args.notes_dir)
     context = ToolContext(
         surface=surface,
@@ -726,7 +875,12 @@ def run_chat(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv()
+    # Loaded from the resolved project root rather than by search. python-dotenv
+    # walks up from whichever frame calls it, which meant the file found here
+    # depended on the working directory and on whether the package was installed
+    # as a checkout or a wheel -- from a data folder it resolved to a `.env` in
+    # the user's home directory that nothing had ever written.
+    load_dotenv(paths.env_file())
 
     # A Windows console is cp1252 unless told otherwise, and a model's reply
     # routinely carries a subscript or a Greek letter. Losing a whole session --
@@ -741,7 +895,19 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="polyrmc", description=__doc__)
     parser.add_argument(
-        "stage", choices=["intake", "process", "agent", "chat", "part1", "part2", "run"]
+        "stage",
+        choices=[
+            "setup",
+            "intake",
+            "process",
+            "agent",
+            "chat",
+            "part1",
+            "part2",
+            "run",
+        ],
+        help="setup takes an API key and stores it; intake and process are the "
+        "measurement path and need no key; agent is the session.",
     )
     parser.add_argument("--config", help="Run configuration JSON.")
     parser.add_argument("--csv", help="Processed CSV (part2 only).")
@@ -840,6 +1006,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Run the section 13 checks against the emitted CSV and fail on any.",
     )
     args = parser.parse_args(argv)
+
+    if args.stage == "setup":
+        return run_setup(args)
 
     if args.stage == "chat":
         return run_chat(args)

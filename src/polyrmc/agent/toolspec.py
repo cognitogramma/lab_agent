@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence
 
+from polyrmc import paths
 from polyrmc.memory.notes import NoteBook
 from polyrmc.tools import Rejected, ToolSurface
 
@@ -40,8 +41,9 @@ Tier = Literal["read", "compute", "commit"]
 
 # Where run history and figure labels are looked up when nothing overrides it.
 # Both were hardcoded at their call sites before, to two different paths, which
-# meant the chat session and the tool surface searched different ledgers.
-DEFAULT_RUNS_DIR = Path("data/runs")
+# meant the chat session and the tool surface searched different ledgers. They
+# now hang off the resolved project root, so the answer no longer depends on
+# which directory the researcher started the session from.
 DEFAULT_LEDGER_ENV = "POLYRMC_FIGURE_LEDGER"
 
 MAX_ROWS = 25
@@ -60,7 +62,7 @@ class ToolContext:
 
     surface: ToolSurface
     notes: NoteBook
-    runs_dir: Path = DEFAULT_RUNS_DIR
+    runs_dir: Path = field(default_factory=paths.runs_dir)
     ledger_path: Path | None = None
     author: str = "researcher"
     output_csv: Path | None = None
@@ -973,7 +975,6 @@ def default_ledger_path() -> Path | None:
 
 __all__ = [
     "DEFAULT_LEDGER_ENV",
-    "DEFAULT_RUNS_DIR",
     "MAX_ROWS",
     "NO_ARGS",
     "Tier",

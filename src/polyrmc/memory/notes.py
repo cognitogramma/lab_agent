@@ -27,7 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_NOTES_DIR = Path("data/memory")
+from polyrmc import paths
+
 NOTES_FILENAME = "notes.json"
 
 
@@ -80,7 +81,10 @@ class NoteBook:
     """The durable note store, loaded from and written to one JSON file."""
 
     def __init__(self, directory: str | Path | None = None) -> None:
-        self.directory = Path(directory) if directory else DEFAULT_NOTES_DIR
+        # Resolved per instance rather than frozen into a module constant: the
+        # default hangs off the project root, and a root read at import time is
+        # a root no test and no POLYRMC_ROOT can move.
+        self.directory = Path(directory) if directory else paths.notes_dir()
         self.path = self.directory / NOTES_FILENAME
         self.notes: list[Note] = []
         self.load()
@@ -174,4 +178,4 @@ class NoteBook:
         return len(self.notes)
 
 
-__all__ = ["DEFAULT_NOTES_DIR", "NOTES_FILENAME", "Note", "NoteBook"]
+__all__ = ["NOTES_FILENAME", "Note", "NoteBook"]

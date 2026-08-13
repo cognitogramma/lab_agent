@@ -667,11 +667,15 @@ class MissingDeclarations(ValueError):
     missing.
     """
 
-    def __init__(self, missing: list[str]) -> None:
-        self.missing = missing
+    def __init__(self, missing: list[str] | str) -> None:
+        # A bare string is accepted and wrapped rather than joined. ``str`` is
+        # iterable, so a caller passing one got a comma between every letter --
+        # "Still needed: a, n,  , a, g, e, n, t" -- and that caller was the
+        # agent session, making this the first thing a new user ever saw.
+        self.missing = [missing] if isinstance(missing, str) else list(missing)
         super().__init__(
             "this run has not been declared yet. Still needed: "
-            + ", ".join(missing)
+            + ", ".join(self.missing)
             + ". These are statements about the experiment, so they are asked, "
             "never inferred from the trace."
         )

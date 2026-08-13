@@ -17,13 +17,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Tier 1/2 judging and orchestration. The pipeline runs end to end without
-# these, using the deterministic StaticJudge.
-judge = [
+# Tier 1/2 judging and orchestration. The pipeline runs end to end without any
+# of this, using the deterministic StaticJudge, which is why none of it is a
+# base dependency.
+agent = [
     "langchain>=1.0",
-    "langchain-google-genai>=2.0",
     "langgraph>=1.0",
 ]
+
+# One per provider, because you buy your own tokens and there is no reason to
+# install an SDK for a vendor you will never key. A missing one is reported as
+# "pip install <name>" rather than a stack trace.
+gemini = ["polyrmc[agent]", "langchain-google-genai>=2.0"]
+claude = ["polyrmc[agent]", "langchain-anthropic>=1.0"]
+openai = ["polyrmc[agent]", "langchain-openai>=1.0"]
+
+# The old name for the Gemini set. Kept because the README and the lab's own
+# notes say `pip install -e .[judge]`, and silently removing an extra fails at
+# install time with nothing pointing at the new spelling.
+judge = ["polyrmc[gemini]"]
+
+all = ["polyrmc[gemini,claude,openai]"]
 
 [project.scripts]
 polyrmc = "polyrmc.cli:main"

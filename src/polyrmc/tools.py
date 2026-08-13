@@ -30,6 +30,7 @@ from typing import Any
 
 import numpy as np
 
+from polyrmc import paths
 from polyrmc.config import RunConfig
 from polyrmc.intake import DeclarationSet, build_intake_form
 from polyrmc.state import (
@@ -126,7 +127,7 @@ class ToolSurface:
         """Search historical .provenance.json sidecar files from previous research."""
         from polyrmc.memory.registry import RunRegistry
 
-        dir_to_scan = runs_dir or Path("data/runs")
+        dir_to_scan = runs_dir or paths.runs_dir()
         registry = RunRegistry(dir_to_scan)
         matches = registry.search(query=query, sample_name=sample_name)
         return [m.to_dict() for m in matches]
@@ -151,7 +152,7 @@ class ToolSurface:
         """Compare current run results against historical benchmark runs."""
         from polyrmc.memory.registry import RunRegistry
 
-        dir_to_scan = runs_dir or Path("data/runs")
+        dir_to_scan = runs_dir or paths.runs_dir()
         registry = RunRegistry(dir_to_scan)
         target_summary = {
             "run_id": self.state.run_id,
