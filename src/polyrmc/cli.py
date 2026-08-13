@@ -637,6 +637,122 @@ def run_setup(args) -> int:
     return 1
 
 
+def run_plot(args) -> int:
+    """Open a data file and plot columns from it. No model, no key, no run.
+
+    The gap this fills is the reason a lab keeps a second application open. The
+    rest of this package works on runs it has processed, which is right for
+    producing a number and useless for the ordinary act of looking at a file
+    somebody just handed you. That act should not require declaring an
+    experiment, and it certainly should not require an API key.
+
+    With no ``--x`` it describes the file instead of plotting it, because the
+    first thing anyone needs is the column names, and guessing them from an
+    instrument export is how you plot the wrong channel.
+    """
+    from polyrmc import figures
+    from polyrmc.kaleidagraph import NotAQpcFile, read_qpc
+    from polyrmc.tabular import UnsupportedFile, open_table
+
+    if not args.file:
+        print("plot needs --file <path>.")
+        return 2
+
+    # A KaleidaGraph plot is described rather than opened: it has no rows, so
+    # there is nothing to put on an axis, but it does say what was plotted and
+    # which fit was used -- which is usually why somebody opened it.
+    if Path(args.file).suffix.lower() == ".qpc":
+        try:
+            plot = read_qpc(args.file)
+        except (NotAQpcFile, OSError) as error:
+            print(f"\n{error}")
+            return 1
+        print(f"\n{Path(args.file).name}: KaleidaGraph plot")
+        for title, values in (
+            ("text in the plot (axis titles and series names, in file order)", plot.labels),
+            ("curve fits, fullest reading first", plot.fit_equations),
+            ("data it was built from", plot.source_references),
+        ):
+            if values:
+                print(f"\n{title}:")
+                for value in values:
+                    print(f"  {value}")
+        if plot.other_text:
+            print("\nrecovered but not classified:")
+            for value in plot.other_text[:10]:
+                print(f"  {value}")
+        for note in plot.notes:
+            print(f"\nnote: {note}")
+        return 0
+
+    try:
+        table = open_table(args.file)
+    except UnsupportedFile as error:
+        print(f"\n{error}")
+        return 2
+    except (FileNotFoundError, IsADirectoryError, ValueError) as error:
+        print(f"\n{error}")
+        return 1
+
+    source = Path(args.file)
+    numeric = table.numeric_columns()
+
+    if not args.x:
+        print(f"\n{source.name}: {table.kind}, {len(table.frame)} rows, "
+              f"{len(table.columns)} columns")
+        print("\nplottable columns:")
+        for name in numeric:
+            print(f"  {name}")
+        other = [c for c in table.columns if c not in numeric]
+        if other:
+            print("\nnot plottable (not numeric):")
+            for name in other:
+                print(f"  {name}")
+        for note in table.notes:
+            print(f"\nnote: {note}")
+        print(f"\n{table.preview()}")
+        print(
+            f"\nPlot it with:  polyrmc plot --file {source.name} --x "
+            f"{numeric[0] if numeric else 'X'} --y "
+            f"{numeric[1] if len(numeric) > 1 else 'Y'}"
+        )
+        return 0
+
+    if not args.y:
+        print("plot needs --y <column> [<column> ...] once --x is given.")
+        return 2
+
+    # Beside the file it came from, which is where somebody looking at a file
+    # expects the picture of it to land. The agent's own plot_columns writes
+    # into the runs directory instead: a session may be pointed at a file in a
+    # folder it cannot write to, and a known-writable location is worth more
+    # there than matching this convention.
+    out_path = Path(args.out) if args.out else source.with_name(
+        f"{source.stem}_{args.x}_vs_{'_'.join(args.y)}.png"
+    )
+
+    try:
+        written = figures.plot_columns(
+            table.frame,
+            args.x,
+            args.y,
+            out_path,
+            title=args.title,
+            style=args.style,
+            logx=args.logx,
+            logy=args.logy,
+            source=f"{source.name} ({table.kind})",
+        )
+    except ValueError as error:
+        print(f"\n{error}")
+        return 1
+
+    print(f"\nwrote {written}")
+    for note in table.notes:
+        print(f"note: {note}")
+    return 0
+
+
 def run_agent(args) -> int:
     """The agent session: the model drives, and commits go through you.
 
@@ -900,15 +1016,28 @@ def main(argv: list[str] | None = None) -> int:
             "setup",
             "intake",
             "process",
+            "plot",
             "agent",
             "chat",
             "part1",
             "part2",
             "run",
         ],
-        help="setup takes an API key and stores it; intake and process are the "
-        "measurement path and need no key; agent is the session.",
+        help="setup takes an API key and stores it; intake, process and plot are "
+        "the measurement path and need no key; agent is the session.",
     )
+    parser.add_argument("--file", help="Data file to open or plot (plot only).")
+    parser.add_argument("--x", help="Column for the x axis (plot only).")
+    parser.add_argument(
+        "--y", nargs="+", help="One or more columns for the y axis (plot only)."
+    )
+    parser.add_argument(
+        "--style", choices=["line", "scatter"], default="line",
+        help="How to draw the series (plot only).",
+    )
+    parser.add_argument("--logx", action="store_true", help="Log x axis (plot only).")
+    parser.add_argument("--logy", action="store_true", help="Log y axis (plot only).")
+    parser.add_argument("--title", help="Figure title (plot only).")
     parser.add_argument("--config", help="Run configuration JSON.")
     parser.add_argument("--csv", help="Processed CSV (part2 only).")
     # No default: part1 falls back to config.channel, and overriding that with a
@@ -1009,6 +1138,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.stage == "setup":
         return run_setup(args)
+
+    if args.stage == "plot":
+        return run_plot(args)
 
     if args.stage == "chat":
         return run_chat(args)

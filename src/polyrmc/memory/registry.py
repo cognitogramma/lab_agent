@@ -36,9 +36,35 @@ class RunSummary:
     warnings_count: int = 0
     declarations: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    dn_dc: float | None = None
+    polymer_type_basis: str = "unrecorded"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+# The two values this lab uses, and what each one says about the material.
+# Deliberately exact rather than nearest-match: a run at 0.165 was configured
+# for something these two entries do not describe, and rounding it to whichever
+# is closer would put a material in a search result that nobody ever declared.
+DN_DC_CLASS = {
+    0.185: "protein",
+    0.150: "polysaccharide",
+}
+
+_DN_DC_TOLERANCE = 1e-6
+
+
+def _class_for_dn_dc(value: Any) -> str | None:
+    """The material class implied by a refractive-index increment, if any."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    for known, name in DN_DC_CLASS.items():
+        if abs(number - known) <= _DN_DC_TOLERANCE:
+            return name
+    return None
 
 
 def summary_from_sidecar(record: dict[str, Any], path: str | Path) -> RunSummary:
@@ -72,11 +98,29 @@ def summary_from_sidecar(record: dict[str, Any], path: str | Path) -> RunSummary
         or run_id
         or "unknown"
     )
-    polymer_type = str(
-        declarations.get("polymer_type")
-        or declarations.get("sample_type")
-        or "unknown"
-    )
+    # The refractive-index increment a run was processed under, which is the
+    # only signal in this archive that bears on what the material was: none of
+    # the 120 historical sidecars carries a declaration at all, so without this
+    # every search by material returns nothing.
+    #
+    # It is recorded as an inference and labelled as one. dn_dc is a property of
+    # the analysis, not of the sample -- it is what somebody typed in -- so a
+    # run configured at 0.150 is a run somebody treated as a polysaccharide,
+    # which is a weaker claim than the run being one. That distinction is not
+    # pedantry here: 39 runs in this archive sit at 0.150 while being named for
+    # a peptide, and exactly one of those two facts is wrong. Callers that
+    # report a material to a person are expected to report the basis with it.
+    dn_dc = (config.get("optical") or {}).get("dn_dc")
+    declared_type = declarations.get("polymer_type") or declarations.get("sample_type")
+    if declared_type:
+        polymer_type = str(declared_type)
+        polymer_type_basis = "declared"
+    elif (implied := _class_for_dn_dc(dn_dc)) is not None:
+        polymer_type = implied
+        polymer_type_basis = f"inferred from dn_dc={float(dn_dc):.3f}"
+    else:
+        polymer_type = "unknown"
+        polymer_type_basis = "unrecorded"
 
     parameters = record.get("parameters") or {}
     mw = parameters.get("mw")
@@ -109,6 +153,8 @@ def summary_from_sidecar(record: dict[str, Any], path: str | Path) -> RunSummary
         warnings_count=len(warnings),
         declarations=declarations,
         warnings=warnings,
+        dn_dc=float(dn_dc) if dn_dc is not None else None,
+        polymer_type_basis=polymer_type_basis,
     )
 
 

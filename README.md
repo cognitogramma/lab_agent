@@ -193,18 +193,36 @@ src/polyrmc/
 
 ```bash
 py -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -e .
 ```
 
-Copy `.env.example` to `.env` and add an API key only if you want the model
-judge; the pipeline runs end to end without one.
+That is the whole measurement path — no model libraries, no vendor SDKs. Add one
+only for the provider you actually buy tokens from:
+
+```bash
+.venv\Scripts\python.exe -m pip install -e ".[gemini]"   # or [claude], [openai], [all]
+.venv\Scripts\python.exe -m polyrmc.cli setup            # take a key, check it works
+```
+
+`polyrmc setup` is the first thing to run if you want the agent, and the last
+thing you need if you do not: `intake`, `process`, `plot` and `--judge static`
+run end to end with no key at all.
+
+Full instructions for a lab machine: **[docs/LAB-SETUP.md](docs/LAB-SETUP.md)**.
+The architecture is written up in
+**[docs/polyrmc-architecture.pdf](docs/polyrmc-architecture.pdf)**.
 
 ## Run
 
 ```bash
 .venv\Scripts\python.exe -m polyrmc.cli agent
 .venv\Scripts\python.exe -m polyrmc.cli run --config examples/run_config.example.json
+.venv\Scripts\python.exe -m polyrmc.cli plot --file <any data file>
 ```
+
+`plot` opens a file and tells you what is in it — ARGEN acquisitions,
+KaleidaGraph `.QDA` and `.QPC`, processed CSVs, and ordinary delimited exports —
+then draws any column against any other. It needs no key and no declared run.
 
 `--judge static` (the default) takes the conservative option deterministically
 and makes no network calls. `--judge model` uses the pinned Gemini model
@@ -219,7 +237,7 @@ offline path either way, and it is what every test runs.
 .venv\Scripts\python.exe -m pytest
 ```
 
-387 tests, no API key or instrument file required. The agent loop is exercised
+497 tests, no API key or instrument file required. The agent loop is exercised
 end to end against a scripted provider, including the paths that matter most:
 a tool that rejects, a commit the researcher declines, a handler that raises,
 and the step cap holding.

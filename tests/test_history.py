@@ -113,3 +113,84 @@ def test_tool_surface_historical_methods(mock_provenance_dir: Path):
 
     comparison = tools.compare_current_run(runs_dir=mock_provenance_dir)
     assert "historical_sample_count" in comparison
+
+
+# --- what a run was made of -------------------------------------------------
+#
+# None of the 120 sidecars in this lab's archive carries a declaration, so
+# without an inference every search by material returns nothing. The inference
+# is allowed; presenting it as a declaration is not.
+
+
+def _sidecar(dn_dc=None, declarations=None, run_id="r1"):
+    record = {
+        "run_id": run_id,
+        "source_file": "raw.txt",
+        "written_at": "2026-08-01T00:00:00Z",
+        "config": {"experiment_type": "acd_dilution"},
+        "declarations": declarations or {},
+    }
+    if dn_dc is not None:
+        record["config"]["optical"] = {"dn_dc": dn_dc}
+    return summary_from_sidecar(record, Path("r1.provenance.json"))
+
+
+def test_dn_dc_implies_a_material_and_says_that_it_inferred_it():
+    summary = _sidecar(dn_dc=0.150)
+
+    assert summary.polymer_type == "polysaccharide"
+    assert summary.polymer_type_basis == "inferred from dn_dc=0.150"
+    assert summary.dn_dc == 0.150
+
+
+def test_the_protein_increment_is_read_the_same_way():
+    assert _sidecar(dn_dc=0.185).polymer_type == "protein"
+
+
+def test_a_declaration_outranks_the_increment():
+    """Someone said so. That beats a number they typed into a config."""
+    summary = _sidecar(
+        dn_dc=0.150, declarations={"polymer_type": {"value": "protein"}}
+    )
+
+    assert summary.polymer_type == "protein"
+    assert summary.polymer_type_basis == "declared"
+
+
+def test_an_unrecognised_increment_is_not_rounded_to_the_nearest_material():
+    """0.165 is nearer 0.150 than 0.185. It is still neither."""
+    summary = _sidecar(dn_dc=0.165)
+
+    assert summary.polymer_type == "unknown"
+    assert summary.polymer_type_basis == "unrecorded"
+    assert summary.dn_dc == 0.165
+
+
+def test_no_increment_leaves_the_material_unknown():
+    summary = _sidecar()
+
+    assert summary.polymer_type == "unknown"
+    assert summary.polymer_type_basis == "unrecorded"
+    assert summary.dn_dc is None
+
+
+def test_searching_by_material_finds_runs_labelled_only_by_increment(tmp_path):
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    for index, dn_dc in enumerate((0.150, 0.185)):
+        (runs / f"run{index}.provenance.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"run{index}",
+                    "source_file": "raw.txt",
+                    "written_at": "2026-08-01T00:00:00Z",
+                    "config": {"optical": {"dn_dc": dn_dc}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    found = RunRegistry(runs).search(query="polysaccharide")
+
+    assert [s.run_id for s in found] == ["run0"]
+    assert found[0].polymer_type_basis.startswith("inferred")

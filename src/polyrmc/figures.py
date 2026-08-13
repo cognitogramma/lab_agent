@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Sequence
 
 import matplotlib
 
@@ -31,6 +32,7 @@ from polyrmc.config import RunConfig
 from polyrmc.plotting import (
     ACCENT,
     EXCISE,
+    FLAG,
     GAIN,
     INK,
     MUTED,
@@ -42,6 +44,12 @@ from polyrmc.state import RunState
 from polyrmc.tier0.splice import render_segments
 
 BLANK = "#2E6A52"
+
+# Colours for overlaid runs. Chosen to stay apart in greyscale as well as in
+# hue, since these figures get printed and pasted into slide decks: crimson,
+# blue, green and orange separate by lightness, not only by colour, so the
+# figure survives a reader who cannot distinguish two of them.
+_OVERLAY_CYCLE = (ACCENT, GAIN, BLANK, FLAG, "#6A5AA0", INK)
 
 
 def _mark_events(axis, hours: np.ndarray, state: RunState) -> None:
@@ -693,6 +701,191 @@ def plot_series_comparison(rows: list[dict], out_path: str | Path, dpi: int = 13
         ha="left",
         y=1.02,
     )
+    return _save(figure, Path(out_path))
+
+
+def _final_index(mw: np.ndarray) -> float | None:
+    """The endpoint of the aggregation index, as a label only.
+
+    A median over the tail rather than the last sample, because the last sample
+    of a noisy trace is a coin flip. This exists to letter a legend entry; no
+    reported quantity is computed here.
+    """
+    if not np.isfinite(mw).any():
+        return None
+    tail = mw[-200:] if mw.size > 200 else mw
+    value = float(np.nanmedian(tail))
+    return value if np.isfinite(value) else None
+
+
+def plot_overlay(
+    runs: Sequence[tuple[RunState, pd.DataFrame]],
+    out_path: str | Path,
+    dpi: int = 130,
+    caveats: Sequence[str] = (),
+) -> Path:
+    """Several runs' aggregation index on one time axis.
+
+    The plotted quantity is M_w/M_0 and not the scattering trace, and that is
+    the whole design of this figure. Raw counts from two runs are not on one
+    scale: they differ by concentration, by detector gain, and by wherever the
+    ND filter happened to be sitting. Drawing them together would put two
+    numbers side by side that were never measured in the same units, which is
+    the most convincing wrong figure this package could produce. M_w/M_0 is
+    each run divided by its own M_0, so the runs arrive already commensurable.
+
+    Excised stretches break the line, as everywhere else. An ND-filter change
+    is drawn in that run's own colour, because after one the run either side is
+    not on a single scale and a reader comparing endpoints across it needs to
+    see that it happened.
+
+    ``caveats`` are printed under the title. A figure gets separated from the
+    conversation that produced it almost immediately, so anything that
+    qualifies what it shows has to travel inside the image.
+    """
+    usable = [(state, frame) for state, frame in runs if len(frame)]
+    if not usable:
+        raise ValueError("no runs with data to overlay")
+
+    figure, axis = plt.subplots(figsize=(11, 5.6), dpi=dpi)
+    figure.patch.set_facecolor("white")
+    _style(axis)
+
+    for position, (state, frame) in enumerate(usable):
+        colour = _OVERLAY_CYCLE[position % len(_OVERLAY_CYCLE)]
+        hours = frame["seconds"].to_numpy(dtype=float) / 3600.0
+        mw = frame["Mw_over_M0"].to_numpy(dtype=float)
+
+        final = _final_index(mw)
+        label = state.run_id if final is None else f"{state.run_id}   (end {final:.2f})"
+
+        for index, (segment_x, segment_y) in enumerate(
+            render_segments(hours, mw, state.splice)
+        ):
+            axis.plot(
+                segment_x,
+                segment_y,
+                color=colour,
+                linewidth=1.0,
+                zorder=3,
+                label=label if index == 0 else None,
+            )
+
+        for sample in state.nd_filter_changes:
+            if sample < hours.size:
+                axis.axvline(
+                    hours[sample], color=colour, linewidth=1.4, alpha=0.55,
+                    linestyle="--", zorder=2,
+                )
+
+    axis.axhline(1.0, color=MUTED, linewidth=0.8, linestyle=":", zorder=1)
+    axis.set_xlabel("elapsed time (h)", fontsize=9, color=INK)
+    axis.set_ylabel("M$_w$/M$_0$", fontsize=9, color=INK)
+    axis.set_title(
+        f"aggregation index   .   {len(usable)} runs   .   dashed = ND filter "
+        "change, scale breaks there",
+        fontsize=9.5,
+        color=INK,
+        loc="left",
+        pad=10,
+    )
+    axis.legend(frameon=False, fontsize=8, labelcolor=MUTED, loc="best")
+
+    if caveats:
+        figure.text(
+            0.0,
+            -0.02,
+            "\n".join(f"note: {line}" for line in caveats),
+            fontsize=7.5,
+            color=EXCISE,
+            ha="left",
+            va="top",
+        )
+
+    return _save(figure, Path(out_path))
+
+
+def plot_columns(
+    frame: pd.DataFrame,
+    x: str,
+    ys: Sequence[str],
+    out_path: str | Path,
+    *,
+    title: str | None = None,
+    style: str = "line",
+    logx: bool = False,
+    logy: bool = False,
+    source: str | None = None,
+    dpi: int = 130,
+) -> Path:
+    """Any column against any other. The exploratory plot.
+
+    Every other figure in this module draws one specific thing and knows what it
+    means, which is what lets it label its own axes and flag its own caveats.
+    This one draws what it is told. That makes it the only figure here that can
+    look at a file nobody has processed yet -- and the only one whose output is
+    not evidence of anything.
+
+    So it says so, in the corner of the image. A figure that leaves this
+    package looks like every other figure that leaves this package, and the one
+    difference that matters -- whether a human reviewed what it plots -- is not
+    visible in a PNG unless it is drawn there.
+
+    Units are the caller's problem by construction: two columns from the same
+    file may be in different ones, and this function has no way to know. It
+    plots what was asked and names the columns on the axis.
+    """
+    missing = [name for name in (x, *ys) if name not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"no column(s) {missing} in this file. Available: "
+            + ", ".join(str(c) for c in frame.columns[:20])
+        )
+    if not ys:
+        raise ValueError("nothing to plot: name at least one y column")
+
+    non_numeric = [
+        name
+        for name in (x, *ys)
+        if not pd.api.types.is_numeric_dtype(frame[name])
+    ]
+    if non_numeric:
+        raise ValueError(
+            f"column(s) {non_numeric} are not numeric, so they cannot go on an "
+            "axis. In an ARGEN file the instrument's own time column is text; "
+            "'seconds' is the reconstructed one."
+        )
+
+    figure, axis = plt.subplots(figsize=(10, 5.6), dpi=dpi)
+    figure.patch.set_facecolor("white")
+    _style(axis)
+
+    x_values = frame[x].to_numpy(dtype=float)
+    for position, name in enumerate(ys):
+        colour = _OVERLAY_CYCLE[position % len(_OVERLAY_CYCLE)]
+        values = frame[name].to_numpy(dtype=float)
+        if style == "scatter":
+            axis.scatter(x_values, values, s=6, color=colour, label=name, zorder=3)
+        else:
+            axis.plot(x_values, values, color=colour, linewidth=0.8, label=name, zorder=3)
+
+    if logx:
+        axis.set_xscale("log")
+    if logy:
+        axis.set_yscale("log")
+
+    axis.set_xlabel(x, fontsize=9, color=INK)
+    axis.set_ylabel(ys[0] if len(ys) == 1 else "value", fontsize=9, color=INK)
+    axis.set_title(title or f"{', '.join(ys)} against {x}", fontsize=9.5,
+                   color=INK, loc="left", pad=10)
+    if len(ys) > 1:
+        axis.legend(frameon=False, fontsize=8, labelcolor=MUTED, loc="best")
+
+    stamp = "exploratory plot -- columns chosen by hand, nothing processed or reviewed"
+    if source:
+        stamp += f"   .   {source}"
+    figure.text(0.0, -0.02, stamp, fontsize=7.5, color=EXCISE, ha="left", va="top")
+
     return _save(figure, Path(out_path))
 
 

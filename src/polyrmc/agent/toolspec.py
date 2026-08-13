@@ -29,6 +29,7 @@ smallest thing that would let a competent colleague decide what to do next?
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence
@@ -274,6 +275,7 @@ def render_run_summaries(summaries: Sequence[dict[str, Any]]) -> str:
     if not summaries:
         return "(no past runs matched)"
     rows = []
+    inferred = 0
     for s in summaries[:MAX_ROWS]:
         run_id = str(s.get("run_id") or "?")
         sample = str(s.get("sample_name") or "")
@@ -281,11 +283,32 @@ def render_run_summaries(summaries: Sequence[dict[str, Any]]) -> str:
         # back to the run id. Printing it twice wastes a line and reads as two
         # facts when it is one.
         head = run_id if sample in ("", run_id) else f"{run_id}  ({sample})"
+
+        # The material, and whether anyone actually said so. A run whose class
+        # was read off its dn_dc is marked, because answering "show me the last
+        # polysaccharide" with a run nobody ever called a polysaccharide is only
+        # honest if the answer says where the word came from.
+        polymer = str(s.get("polymer_type") or "unknown")
+        basis = str(s.get("polymer_type_basis") or "unrecorded")
+        if polymer == "unknown":
+            material = ""
+        elif basis.startswith("inferred"):
+            inferred += 1
+            material = f"  type={polymer}?(from dn_dc)"
+        else:
+            material = f"  type={polymer}"
+
         rows.append(
-            f"{head}  [{s.get('experiment_type')}]  "
+            f"{head}  [{s.get('experiment_type')}]{material}  "
             f"A2*Mw={_number(s.get('a2_mw'))} k_D={_number(s.get('k_d'))} "
             f"Mw={_number(s.get('mw'))} window={s.get('window_length')} "
             f"anomalies={s.get('anomalies_count')} at {str(s.get('written_at'))[:10]}"
+        )
+    if inferred:
+        rows.append(
+            f"note: {inferred} of these carry no declared material. The type shown "
+            "is what their dn_dc implies -- what somebody configured, not what "
+            "anybody declared the sample to be. Say so if you report it."
         )
     return _truncated(rows, len(summaries))
 
@@ -504,6 +527,251 @@ def _h_extract_parameters(ctx: ToolContext, args: dict[str, Any]) -> str:
     ctx.surface.state.blocked.extend(part2.blocked)
     ctx.surface.state.execution_history.append(f"extracted parameters from {csv}")
     return render_state(ctx.surface)
+
+
+# Which drawing each kind maps to, and whether it can be drawn for more than
+# one run at a time. Only "index" is comparable across runs: it is each run
+# divided by its own M0, so two of them belong on one axis. The others are in
+# detector counts, which two runs do not share -- different concentration,
+# different gain, different ND-filter position -- so they are single-run only
+# and asking for a spread of them returns a rejection rather than a figure that
+# invites the comparison anyway.
+_FIGURE_KINDS = {
+    "index": ("aggregation index over time", True),
+    "raw": ("the unprocessed trace, with anomalies marked", False),
+    "smoothing": ("the smoothing window against the trace it tracked", False),
+    "derived": ("excess Rayleigh ratio and the aggregation index", False),
+}
+
+# What each figure draws from the record, and therefore which gaps in that
+# record change how it should be read. A caveat about something the figure
+# never consulted is noise, and small red text that is usually noise stops
+# being read at all -- including on the figure where it mattered.
+_FIGURE_DEPENDS_ON = {
+    "index": ("nd_filter_changes", "splice"),
+    "raw": ("nd_filter_changes", "splice", "anomalies"),
+    "smoothing": ("nd_filter_changes", "splice", "anomalies"),
+    "derived": ("nd_filter_changes", "splice", "anomalies"),
+}
+
+
+def _safe_name(text: str) -> str:
+    """A filename component that survives Windows, Explorer, and a paste."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-")[:60] or "run"
+
+
+def _h_plot_figure(ctx: ToolContext, args: dict[str, Any]) -> str:
+    from polyrmc import figures
+    from polyrmc.rehydrate import list_past_runs, load_past_run
+
+    kind = str(args.get("kind") or "index").strip().lower()
+    if kind not in _FIGURE_KINDS:
+        raise Rejected(
+            f"REJECTED. kind must be one of {sorted(_FIGURE_KINDS)}; got {kind!r}."
+        )
+    _, comparable = _FIGURE_KINDS[kind]
+
+    run_ids = [str(r).strip() for r in (args.get("run_ids") or []) if str(r).strip()]
+    if not run_ids:
+        run_ids = [ctx.surface.state.run_id]
+    if len(run_ids) > 1 and not comparable:
+        raise Rejected(
+            f"REJECTED. {kind!r} is drawn in detector counts, which two runs do "
+            "not share: they differ by concentration, gain, and ND-filter "
+            "position. Draw it for one run, or use kind='index', which is "
+            "normalised per run and is the figure that can carry a comparison."
+        )
+    if len(run_ids) > 6:
+        raise Rejected(
+            f"REJECTED. {len(run_ids)} runs on one axis is unreadable. Six is the "
+            "most this figure distinguishes by colour."
+        )
+
+    loaded = []
+    for run_id in run_ids:
+        try:
+            loaded.append(load_past_run(run_id, ctx.runs_dir))
+        except FileNotFoundError as error:
+            available = list_past_runs(ctx.runs_dir)
+            hint = (
+                f" {len(available)} run(s) are drawable, e.g. "
+                + ", ".join(available[:5])
+                if available
+                else " Nothing under this runs directory has been processed yet."
+            )
+            raise Rejected(f"REJECTED. {error}{hint}") from error
+
+    # Every reason a figure is less than it looks, gathered from the records
+    # themselves and printed into the image. A PNG outlives the session that
+    # made it and gets pasted somewhere with no caveat attached, so the caveat
+    # has to be part of the picture.
+    # Identical gaps are collapsed rather than repeated per run: six runs of the
+    # same vintage share the same missing register, and six copies of one
+    # sentence is how a caveat becomes wallpaper.
+    grouped: dict[str, list[str]] = {}
+    for run in loaded:
+        for key, phrase in run.unrecorded.items():
+            if key in _FIGURE_DEPENDS_ON[kind]:
+                grouped.setdefault(phrase, []).append(run.label)
+    caveats = [
+        f"{phrase} ({'all runs shown' if len(names) == len(loaded) and len(loaded) > 1 else ', '.join(names)})"
+        for phrase, names in grouped.items()
+    ]
+
+    out_dir = Path(ctx.runs_dir) / "figures"
+    if kind == "index":
+        stem = "index_" + "__vs__".join(_safe_name(r.label) for r in loaded)
+        out_path = figures.plot_overlay(
+            [(run.state, run.frame) for run in loaded],
+            out_dir / f"{stem[:120]}.png",
+            caveats=caveats,
+        )
+    else:
+        run = loaded[0]
+        if run.config is None:
+            raise Rejected(
+                f"REJECTED. {run.label} records a configuration that does not "
+                "validate against the current schema, and this figure labels its "
+                "axes from it -- channel, smoothing order, calibration. Drawing "
+                "it would mean inventing those labels. kind='index' reads no "
+                "configuration and works on this run."
+            )
+        draw = {
+            "raw": figures.plot_raw_trace,
+            "smoothing": figures.plot_smoothing_detail,
+            "derived": figures.plot_derived_quantities,
+        }[kind]
+        out_path = draw(
+            run.state,
+            run.config,
+            run.frame,
+            out_dir / f"{kind}_{_safe_name(run.label)}.png",
+        )
+
+    ctx.surface.state.execution_history.append(
+        f"drew {kind} figure over {len(loaded)} run(s): {out_path.name}"
+    )
+    lines = [
+        f"wrote {paths.relative_to_root(out_path)}",
+        f"{_FIGURE_KINDS[kind][0]}, {len(loaded)} run(s): "
+        + ", ".join(run.label for run in loaded),
+    ]
+    if caveats:
+        lines.append("printed on the figure: " + "; ".join(caveats))
+    return "\n".join(lines)
+
+
+def _h_open_data_file(ctx: ToolContext, args: dict[str, Any]) -> str:
+    from polyrmc.tabular import UnsupportedFile, open_table
+
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise Rejected("REJECTED. open_data_file needs a path.")
+    try:
+        table = open_table(path)
+    except UnsupportedFile as error:
+        raise Rejected(f"REJECTED. {error}") from error
+    except (FileNotFoundError, IsADirectoryError, ValueError) as error:
+        raise Rejected(f"REJECTED. {error}") from error
+
+    numeric = table.numeric_columns()
+    lines = [
+        f"{Path(path).name}: {table.kind}, {len(table.frame)} rows, "
+        f"{len(table.columns)} columns",
+        "plottable: " + (", ".join(numeric) if numeric else "(none are numeric)"),
+    ]
+    other = [c for c in table.columns if c not in numeric]
+    if other:
+        lines.append("not plottable: " + ", ".join(other))
+    lines.extend(f"note: {n}" for n in table.notes)
+    lines.append(table.preview())
+    return "\n".join(lines)
+
+
+def _h_describe_plot_file(ctx: ToolContext, args: dict[str, Any]) -> str:
+    from polyrmc.kaleidagraph import NotAQpcFile, read_qpc
+
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise Rejected("REJECTED. describe_plot_file needs a path.")
+    try:
+        plot = read_qpc(path)
+    except (NotAQpcFile, FileNotFoundError, IsADirectoryError, OSError) as error:
+        raise Rejected(f"REJECTED. {error}") from error
+
+    if plot.is_empty:
+        return f"{Path(path).name}: a KaleidaGraph plot with no recoverable text."
+
+    lines = [f"{Path(path).name}: KaleidaGraph plot"]
+    if plot.labels:
+        lines.append(
+            "text (axis titles and series names together, file order): "
+            + "; ".join(plot.labels[:MAX_ROWS])
+        )
+    if plot.fit_equations:
+        lines.append("curve fit: " + plot.fit_equations[0])
+        for extra in plot.fit_equations[1:3]:
+            lines.append("  also present: " + extra)
+    if plot.source_references:
+        lines.append("built from: " + "; ".join(plot.source_references))
+    lines.extend(f"note: {note}" for note in plot.notes)
+    return "\n".join(lines)
+
+
+def _h_plot_columns(ctx: ToolContext, args: dict[str, Any]) -> str:
+    from polyrmc import figures
+    from polyrmc.tabular import UnsupportedFile, open_table
+
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise Rejected("REJECTED. plot_columns needs a path.")
+    x = str(args.get("x") or "").strip()
+    ys = [str(c).strip() for c in (args.get("y") or []) if str(c).strip()]
+    if not x or not ys:
+        raise Rejected("REJECTED. plot_columns needs an x column and at least one y.")
+
+    style = str(args.get("style") or "line").lower()
+    if style not in ("line", "scatter"):
+        raise Rejected(f"REJECTED. style must be 'line' or 'scatter'; got {style!r}.")
+
+    try:
+        table = open_table(path)
+    except UnsupportedFile as error:
+        raise Rejected(f"REJECTED. {error}") from error
+    except (FileNotFoundError, IsADirectoryError, ValueError) as error:
+        raise Rejected(f"REJECTED. {error}") from error
+
+    stem = _safe_name(f"{Path(path).stem}_{x}_vs_{'_'.join(ys)}")
+    try:
+        out_path = figures.plot_columns(
+            table.frame,
+            x,
+            ys,
+            Path(ctx.runs_dir) / "figures" / f"cols_{stem}.png",
+            title=str(args.get("title") or "") or None,
+            style=style,
+            logx=bool(args.get("logx")),
+            logy=bool(args.get("logy")),
+            source=f"{Path(path).name} ({table.kind})",
+        )
+    except ValueError as error:
+        # The column names are the model's most likely mistake, and the message
+        # already lists what is actually in the file, so this comes back as a
+        # correctable refusal rather than a failed turn.
+        raise Rejected(f"REJECTED. {error}") from error
+
+    ctx.surface.state.execution_history.append(
+        f"plotted {', '.join(ys)} against {x} from {Path(path).name}"
+    )
+    lines = [
+        f"wrote {paths.relative_to_root(out_path)}",
+        f"{', '.join(ys)} against {x}, from {Path(path).name} ({table.kind}), "
+        f"{len(table.frame)} rows",
+        "marked exploratory on the figure: these columns were chosen by hand and "
+        "nothing about them has been processed or reviewed.",
+    ]
+    lines.extend(f"note: {n}" for n in table.notes)
+    return "\n".join(lines)
 
 
 def _h_verify_output(ctx: ToolContext, args: dict[str, Any]) -> str:
@@ -771,6 +1039,87 @@ _TOOLS: list[Tool] = [
         "Compute the safe band of smoothing windows. Does not choose one.",
         NO_ARGS,
         _h_sweep_windows,
+    ),
+    Tool(
+        "open_data_file",
+        "read",
+        "Open any data file and report what is in it: kind, row count, column "
+        "names, which columns can go on an axis, and the first few rows. Works "
+        "on raw ARGEN acquisitions, processed CSVs, and ordinary delimited "
+        "exports. Use this before plot_columns rather than guessing column "
+        "names -- an ARGEN file's own time column is text, and 'seconds' is the "
+        "reconstructed one.",
+        _object(
+            {"path": {"type": "string", "description": "Path to the data file."}},
+            ["path"],
+        ),
+        _h_open_data_file,
+    ),
+    Tool(
+        "describe_plot_file",
+        "read",
+        "Read a KaleidaGraph .QPC plot and report what it says about itself: the "
+        "axis titles and series names, the curve fit with the initial guesses it "
+        "was given, and which data file it was built from. A .QPC contains no "
+        "data -- use open_data_file on the .QDA for the numbers.",
+        _object(
+            {"path": {"type": "string", "description": "Path to the .QPC file."}},
+            ["path"],
+        ),
+        _h_describe_plot_file,
+    ),
+    Tool(
+        "plot_columns",
+        "compute",
+        "Plot any column of a data file against any other and write a PNG, "
+        "returning the path. This is the free-form plot: it draws what it is "
+        "told, from a file nothing has processed, and its output is marked "
+        "exploratory. For a reviewed figure over a run this pipeline has "
+        "already processed, use plot_figure instead.",
+        _object(
+            {
+                "path": {"type": "string", "description": "Path to the data file."},
+                "x": {"type": "string", "description": "Column for the x axis."},
+                "y": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "One or more columns for the y axis.",
+                },
+                "style": {"type": "string", "enum": ["line", "scatter"]},
+                "logx": {"type": "boolean"},
+                "logy": {"type": "boolean"},
+                "title": {"type": "string"},
+            },
+            ["path", "x", "y"],
+        ),
+        _h_plot_columns,
+    ),
+    Tool(
+        "plot_figure",
+        "compute",
+        "Draw a figure as a PNG and write it beside the runs, returning the path. "
+        "kind='index' puts one or several runs' aggregation index on one time "
+        "axis and is the figure to use when asked to compare or contrast runs; "
+        "'raw', 'smoothing' and 'derived' are single-run diagnostics. Runs must "
+        "already be processed -- this reads what was recorded, and never "
+        "reprocesses. Name past runs with run_ids; omitting it draws the current "
+        "run.",
+        _object(
+            {
+                "kind": {
+                    "type": "string",
+                    "enum": sorted(_FIGURE_KINDS),
+                    "description": "Which figure. Defaults to index.",
+                },
+                "run_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Runs to draw, from search_past_runs. Up to six "
+                    "for kind=index; exactly one otherwise.",
+                },
+            }
+        ),
+        _h_plot_figure,
     ),
     Tool(
         "check_declarations",
