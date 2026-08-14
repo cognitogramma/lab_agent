@@ -193,7 +193,7 @@ src/polyrmc/
 
 ```bash
 py -m venv .venv
-.venv\Scripts\python.exe -m pip install -e .
+.venv\Scripts\python.exe -m pip install -e ".[test]"
 ```
 
 That is the whole measurement path — no model libraries, no vendor SDKs. Add one
@@ -208,9 +208,17 @@ only for the provider you actually buy tokens from:
 thing you need if you do not: `intake`, `process`, `plot` and `--judge static`
 run end to end with no key at all.
 
-Full instructions for a lab machine: **[docs/LAB-SETUP.md](docs/LAB-SETUP.md)**.
-The architecture is written up in
-**[docs/polyrmc-architecture.pdf](docs/polyrmc-architecture.pdf)**.
+Three documents, depending on where you are starting:
+
+| | |
+|---|---|
+| [docs/polyrmc-setup.pdf](docs/polyrmc-setup.pdf) | A new machine with no Python on it, assuming this repository is all you have. Covers the offline case. |
+| [docs/LAB-SETUP.md](docs/LAB-SETUP.md) | Day-to-day use from a working checkout. |
+| [docs/polyrmc-architecture.pdf](docs/polyrmc-architecture.pdf) | What the system is, what each tier may not do, the KaleidaGraph formats, and the known gaps. |
+
+Note there is **no sample data in this repository** — everything under `data/`
+is lab data and excluded. `pytest` is how you verify an install; it writes its
+own synthetic acquisitions.
 
 ## Run
 

@@ -37,7 +37,13 @@ openai = ["polyrmc[agent]", "langchain-openai>=1.0"]
 # install time with nothing pointing at the new spelling.
 judge = ["polyrmc[gemini]"]
 
-all = ["polyrmc[gemini,claude,openai]"]
+# Running the suite. Separate from the base install because a lab machine that
+# only processes data does not need it -- but the documented way to verify an
+# installation is to run the tests, and `pip install -e .` alone left a fresh
+# machine with no pytest and a setup guide whose own verification step failed.
+test = ["pytest>=8.0"]
+
+all = ["polyrmc[gemini,claude,openai,test]"]
 
 [project.scripts]
 polyrmc = "polyrmc.cli:main"

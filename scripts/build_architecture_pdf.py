@@ -551,16 +551,17 @@ concentration dependence of scattering.</td></tr>
 """
 
 
-def main() -> int:
-    out_dir = paths.project_root() / "docs"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "polyrmc-architecture.pdf"
+def render(html: str, out_path: Path, css: str = CSS) -> int:
+    """Lay out one HTML document into a paginated PDF. Returns the page count.
 
-    story = fitz.Story(html=document(), user_css=CSS)
+    Shared with the setup guide rather than copied into it: two builders that
+    each own a copy of the pagination loop drift into two documents that look
+    like they came from different projects.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    story = fitz.Story(html=html, user_css=css)
     writer = fitz.DocumentWriter(out_path)
-    frame = fitz.Rect(
-        MARGIN, MARGIN, PAGE.width - MARGIN, PAGE.height - MARGIN
-    )
+    frame = fitz.Rect(MARGIN, MARGIN, PAGE.width - MARGIN, PAGE.height - MARGIN)
 
     pages = 0
     more = True
@@ -571,7 +572,12 @@ def main() -> int:
         writer.end_page()
         pages += 1
     writer.close()
+    return pages
 
+
+def main() -> int:
+    out_path = paths.project_root() / "docs" / "polyrmc-architecture.pdf"
+    pages = render(document(), out_path)
     print(f"wrote {paths.relative_to_root(out_path)} ({pages} pages)")
     return 0
 

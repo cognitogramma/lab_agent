@@ -4,6 +4,12 @@ Everything here is Windows PowerShell, because that is what the instrument
 machines run. Nothing in this document needs an API key until the section that
 says it does.
 
+> **Standing up a brand-new machine?** Read
+> [`docs/polyrmc-setup.pdf`](polyrmc-setup.pdf) instead. It starts from a
+> computer with no Python on it and assumes this repository is all you have,
+> including the case where the machine cannot reach the internet. This document
+> assumes you already have a working checkout.
+
 ---
 
 ## 1. Install
@@ -13,11 +19,14 @@ You need **Python 3.11 or newer**. Check with `py --version`.
 ```powershell
 cd <wherever you keep the project>
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
 ```
 
 That installs the measurement path and nothing else: numpy, scipy, pandas,
-pydantic, matplotlib. No model libraries, no vendor SDKs.
+pydantic, matplotlib, plus pytest so you can verify the result. No model
+libraries, no vendor SDKs. Plain `pip install -e .` also gives a working
+installation — it just leaves out pytest, so there would be nothing to run the
+check with.
 
 Check it worked:
 
@@ -32,6 +41,20 @@ install is fine.
 > on PATH on these machines, and activating the venv is one more thing to
 > forget. Every command below uses the full path so it works from a cold
 > terminal.
+
+> **Ignore `requirements.txt`.** It predates the packaging in `pyproject.toml`,
+> lists the orchestration libraries and all three vendor SDKs as though they
+> were required, and installing from it pulls in SDKs for providers you will
+> never key. `pip install -e .` is the supported route.
+
+### There is no sample data in the repository
+
+A fresh copy contains **no instrument files and no processed runs** —
+everything under `data/` is excluded, because traces and sidecars are lab data
+and this repository is public. So there is nothing in the box to open, and the
+first real file you point it at will be one of your own. This is also why
+`pytest` rather than "open the example file" is how you verify an install: the
+tests write their own synthetic acquisitions.
 
 ### If you want the agent session as well
 
