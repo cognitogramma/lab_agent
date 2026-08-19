@@ -79,6 +79,18 @@ def notes_dir() -> Path:
     return project_root() / "data" / "memory"
 
 
+def logs_dir() -> Path:
+    """Where session logs go.
+
+    Separate from ``runs_dir`` on purpose. A run directory is the audit trail of
+    a measurement and every file in it is a result; a session log is the
+    background noise of one conversation -- tool arguments, full tool output,
+    token counts, the provider's raw complaint -- and mixing the two makes the
+    directory that has to stay legible the one that fills up fastest.
+    """
+    return project_root() / "data" / "logs"
+
+
 def example_config() -> Path:
     """The reviewed example configuration used as session scaffolding."""
     return project_root() / "examples" / "run_config.example.json"
@@ -101,6 +113,7 @@ __all__ = [
     "ROOT_ENV",
     "env_file",
     "example_config",
+    "logs_dir",
     "notes_dir",
     "project_root",
     "relative_to_root",

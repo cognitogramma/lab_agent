@@ -1,0 +1,107 @@
+{
+  "technique": {
+    "value": "SLS",
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.273734Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "instrument": {
+    "value": "argen",
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.273874Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "wavelength_nm": {
+    "value": 660.0,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.273874Z",
+    "recalled_from": null,
+    "derived_from": "instrument"
+  },
+  "angle_deg": {
+    "value": 90.0,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.273874Z",
+    "recalled_from": null,
+    "derived_from": "instrument"
+  },
+  "sample_class": {
+    "value": "protein_peptide",
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.273976Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "dn_dc": {
+    "value": 0.185,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.273976Z",
+    "recalled_from": null,
+    "derived_from": "sample_class"
+  },
+  "experiment_type": {
+    "value": "acd_dilution",
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274064Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "c0_g_per_cm3": {
+    "value": 0.004,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274160Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "ls_units": {
+    "value": "count_rate",
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274249Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "saturation_ceiling": {
+    "value": 65535.0,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274336Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "buffer_blank": {
+    "value": 0.0,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274420Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "toluene_ref": {
+    "value": 5000.0,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274505Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "r_toluene_cm_inv": {
+    "value": 1.19e-05,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274588Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "cell_volume_cm3": {
+    "value": 1.0,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274670Z",
+    "recalled_from": null,
+    "derived_from": null
+  },
+  "flow_rate_cm3_per_s": {
+    "value": 0.001,
+    "author": "example",
+    "timestamp": "2026-08-19T05:40:15.274752Z",
+    "recalled_from": null,
+    "derived_from": null
+  }
+}

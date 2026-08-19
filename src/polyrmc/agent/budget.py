@@ -131,8 +131,14 @@ class Budget:
     def record(self, usage: Usage) -> None:
         self.spent.add(usage)
 
-    def render(self, label: str = "session") -> str:
-        """One line a researcher paying for this can read at a glance."""
+    def render(self, label: str = "session", nudge: bool = True) -> str:
+        """One line a researcher paying for this can read at a glance.
+
+        ``nudge`` suppresses the "set POLYRMC_RATES" hint. It is useful advice
+        when a session ends normally and noise inside the banner that tells
+        someone their key is spent -- the moment they are least interested in
+        configuring a cost estimate for it.
+        """
         spent = self.spent
         parts = [
             f"{label}: {spent.requests} request(s)",
@@ -141,7 +147,7 @@ class Budget:
         ]
         if self.rates is not None:
             parts.append(f"~${self.rates.cost(spent):.4f}")
-        else:
+        elif nudge:
             parts.append(f"set {RATES_ENV} for a cost estimate")
         line = ", ".join(parts)
         if self.max_requests:

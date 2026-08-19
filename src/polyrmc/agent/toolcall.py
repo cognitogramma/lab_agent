@@ -40,9 +40,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Literal, Protocol, Sequence
+from typing import Any, Callable, Iterable, Literal, Protocol, Sequence
 
 from polyrmc.agent.budget import Usage
 
@@ -138,10 +139,22 @@ class ProviderCallFailed(RuntimeError):
     a different one spends money they did not agree to spend.
     """
 
-    def __init__(self, message: str, provider: str = "", model: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        provider: str = "",
+        model: str = "",
+        failure: "ProviderFailure | None" = None,
+    ) -> None:
         super().__init__(message)
         self.provider = provider
         self.model = model
+        # The classification made at the point of failure, where the provider's
+        # own exception was still in hand. A caller that re-derived it from
+        # ``str(self)`` would be classifying a string this package wrote, which
+        # already quotes the provider inside it -- so the raw text would come
+        # back wrapped in a second copy of its own explanation.
+        self.failure = failure
 
 
 @dataclass(frozen=True)
@@ -236,10 +249,28 @@ class LangChainToolProvider:
     no gain.
     """
 
-    def __init__(self, client: Any, name: str, model: str) -> None:
+    def __init__(
+        self,
+        client: Any,
+        name: str,
+        model: str,
+        min_interval: float = 0.0,
+        max_rate_limit_waits: int = 2,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        on_wait: Callable[[float, str], None] | None = None,
+    ) -> None:
         self.client = client
         self.name = name
         self.model = model
+        # Seconds to leave between requests. Zero by default: a paid key has no
+        # such ceiling and pacing it would only make sessions slower.
+        self.min_interval = float(min_interval)
+        self.max_rate_limit_waits = int(max_rate_limit_waits)
+        self.sleep = sleep
+        self.clock = clock
+        self.on_wait = on_wait
+        self._last_call: float | None = None
 
     # --- translation ---------------------------------------------------------
 
@@ -282,6 +313,52 @@ class LangChainToolProvider:
                     )
         return converted
 
+    # --- calling ------------------------------------------------------------
+
+    def _pace(self) -> None:
+        """Hold off until ``min_interval`` has passed since the last request."""
+        if self.min_interval <= 0 or self._last_call is None:
+            return
+        waited = self.clock() - self._last_call
+        if waited < self.min_interval:
+            self.sleep(self.min_interval - waited)
+
+    def _invoke(self, bound: Any, payload: list[Any]) -> Any:
+        """One request, waiting out a rate limit rather than dying to it.
+
+        This is the single exception to "the session does not retry", and it is
+        not really an exception. The rule exists so a researcher's key is never
+        charged twice for one question -- but a rate-limited request was
+        *refused*, not served: no tokens were counted, nothing was spent, and
+        there is nothing to spend twice. Ending a session over it would throw
+        away a conversation that is minutes old and thousands of input tokens
+        deep, to avoid a cost that does not exist.
+
+        A daily quota, a dead key and a bad model id are all still fatal on the
+        first answer, because waiting cannot fix any of them.
+        """
+        for attempt in range(self.max_rate_limit_waits + 1):
+            self._pace()
+            try:
+                self._last_call = self.clock()
+                return bound.invoke(payload)
+            except Exception as error:  # provider SDKs raise their own types
+                failure = classify_provider_error(error, self.name, self.model)
+                if failure.rate_limited and attempt < self.max_rate_limit_waits:
+                    # The provider's own number where it gave one; otherwise a
+                    # minute, which is the window these limits are measured in.
+                    delay = failure.retry_after or 60.0
+                    if self.on_wait is not None:
+                        self.on_wait(delay, failure.meaning)
+                    self.sleep(delay)
+                    continue
+                raise ProviderCallFailed(
+                    explain_provider_error(error, self.name, self.model),
+                    provider=self.name,
+                    model=self.model,
+                    failure=failure,
+                ) from error
+
     def converse(
         self,
         system: str,
@@ -292,14 +369,7 @@ class LangChainToolProvider:
 
         bound = self.client.bind_tools(list(tools)) if tools else self.client
         payload = [SystemMessage(content=system), *self._to_langchain(messages)]
-        try:
-            reply = bound.invoke(payload)
-        except Exception as error:  # provider SDKs raise their own types
-            raise ProviderCallFailed(
-                explain_provider_error(error, self.name, self.model),
-                provider=self.name,
-                model=self.model,
-            ) from error
+        reply = self._invoke(bound, payload)
 
         calls = [
             ToolCall(
@@ -363,29 +433,64 @@ _KEY_SHAPES = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{8,})")
 
 # Ordered because the first match wins and the categories overlap in the wild:
 # a quota refusal is served as 403 by one provider and 429 by another.
-_ERROR_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+# Each entry is (markers, headline, meaning, remedy). The three prose parts are
+# kept apart rather than glued into one paragraph because they are consumed
+# separately: a session that stops shows the headline as a banner, the meaning
+# as the body, and the remedy as the next step. Joining them here and splitting
+# them on punctuation later is how a message ends up half-quoted in a banner.
+_ERROR_HINTS: tuple[tuple[tuple[str, ...], str, str, str], ...] = (
+    # Rate limit before quota, and they are not the same failure. A free tier
+    # rations requests per *minute* as well as per day, and an agent spends one
+    # request per tool round -- so a session doing real work trips the
+    # per-minute ceiling four rounds in, with its daily allowance barely
+    # touched. Telling that researcher to top up their account is wrong twice
+    # over: they do not need to spend money, and the thing they actually need
+    # to do -- wait the number of seconds the provider just named -- goes
+    # unsaid.
+    (
+        (
+            "perminute",
+            "per minute",
+            "requests per minute",
+            "rpm",
+        ),
+        "rate limited",
+        "That model is being asked for more requests per minute than the key "
+        "allows.",
+        "Nothing is wrong with the run or the account -- an agent spends one "
+        "request per tool round, which is easy to do faster than a free tier "
+        "permits. Wait the moment out and ask again, or pace the session with "
+        "--min-request-interval.",
+    ),
     (
         ("insufficient_quota", "quota", "429", "rate limit", "resource_exhausted", "billing"),
-        "That key is out of quota or over its rate limit. This is a "
-        "buy-your-own-tokens setup, so the fix is on the account the key belongs "
-        "to -- top it up, wait out the window, or start again on another "
-        "--provider you hold a key for.",
+        "out of quota",
+        "That key is out of quota or over its rate limit.",
+        "This is a buy-your-own-tokens setup, so the fix is on the account the "
+        "key belongs to -- top it up, wait out the window, or start again on "
+        "another --provider you hold a key for.",
     ),
     (
         ("401", "403", "unauthorized", "permission_denied", "invalid_api_key", "api key not valid"),
-        "That key was rejected. Check it is current and pasted whole, and that "
-        "it belongs to the provider you selected.",
+        "key rejected",
+        "That key was rejected.",
+        "Check it is current and pasted whole, and that it belongs to the "
+        "provider you selected. `polyrmc setup` stores a new one.",
     ),
     (
         ("404", "not found", "does not exist", "unknown model", "invalid model"),
-        "That model id was rejected. Pin a different one with --model, or set "
-        "the provider's *_MODEL variable; the default here is a pin, not a "
-        "discovery, and pins go stale.",
+        "model id rejected",
+        "That model id was rejected.",
+        "Pin a different one with --model, or set the provider's *_MODEL "
+        "variable; the default here is a pin, not a discovery, and pins go "
+        "stale.",
     ),
     (
         ("timeout", "timed out", "connection", "unavailable", "503", "502", "504"),
-        "The provider could not be reached. This one is usually transient -- the "
-        "session stops rather than retrying, so nothing is spent twice.",
+        "provider unreachable",
+        "The provider could not be reached.",
+        "This one is usually transient -- the session stops rather than "
+        "retrying, so nothing is spent twice. Ask again in a moment.",
     ),
 )
 
@@ -395,6 +500,98 @@ def redact(text: str) -> str:
     return _KEY_SHAPES.sub("<redacted>", str(text))
 
 
+@dataclass(frozen=True)
+class ProviderFailure:
+    """One provider refusal, taken apart into the pieces a caller needs.
+
+    ``raw`` is the provider's own words, with anything credential-shaped
+    blanked. It is kept because it is the only ground truth about what happened,
+    and it is kept *separate* because it is routinely four hundred characters of
+    JSON -- the right content for a session log, and the wrong content for the
+    line that tells a researcher their key is spent.
+    """
+
+    provider: str
+    model: str
+    headline: str
+    meaning: str
+    remedy: str
+    raw: str
+    retry_after: float | None = None
+    """Seconds the provider asked to be left alone, when it said so.
+
+    Read off the response rather than guessed. A backoff this package invented
+    would be either too short -- spending another rejected request to learn the
+    same thing -- or too long, sitting idle past a window that had already
+    reopened. The provider knows; it is in the reply.
+    """
+
+    @property
+    def rate_limited(self) -> bool:
+        """A wait, not a bill. The one failure worth sitting out."""
+        return self.headline == "rate limited"
+
+    def one_line(self) -> str:
+        """Headline and meaning, without the provider's raw text."""
+        return f"{self.provider} ({self.model}): {self.meaning}"
+
+
+def first_line(text: str, limit: int = 160) -> str:
+    """The opening line of a provider's complaint, for a one-line report."""
+    stripped = str(text).strip()
+    line = stripped.splitlines()[0] if stripped else ""
+    return line if len(line) <= limit else line[: limit - 3] + "..."
+
+
+def classify_provider_error(
+    error: Exception, provider: str = "", model: str = ""
+) -> ProviderFailure:
+    """Sort an SDK exception into the failures a researcher can act on.
+
+    The useful distinction is whether the fix is a bill, a key, a model id, or a
+    wait. Anything matching none of them is reported as itself rather than
+    forced into the nearest category: a wrong diagnosis costs more than none.
+    """
+    raw = redact(error)
+    lowered = raw.lower()
+    delay = retry_delay_in(raw)
+    for markers, headline, meaning, remedy in _ERROR_HINTS:
+        if any(marker in lowered for marker in markers):
+            if headline == "rate limited" and delay is not None:
+                meaning = f"{meaning} It asked for {delay:.0f}s."
+            return ProviderFailure(
+                provider, model, headline, meaning, remedy, raw, delay
+            )
+    return ProviderFailure(
+        provider,
+        model,
+        "the model call failed",
+        f"{type(error).__name__}: {first_line(raw)}",
+        "The provider's full response is in the session log.",
+        raw,
+        delay,
+    )
+
+
+# ``'retryDelay': '41s'`` and ``Please retry in 41.2155s`` -- the same number,
+# reported twice in the same response, in two shapes. Both are matched because
+# which one is present varies with the endpoint.
+_RETRY_DELAY = re.compile(
+    r"retry(?:delay|\s+in)['\"]?[:\s]+['\"]?(\d+(?:\.\d+)?)\s*s", re.IGNORECASE
+)
+
+
+def retry_delay_in(text: str) -> float | None:
+    """How long the provider asked to be left alone, if it said."""
+    match = _RETRY_DELAY.search(str(text))
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:  # pragma: no cover - the pattern guarantees a number
+        return None
+
+
 def explain_provider_error(error: Exception, provider: str, model: str) -> str:
     """Turn an SDK exception into something a researcher can act on.
 
@@ -402,12 +599,9 @@ def explain_provider_error(error: Exception, provider: str, model: str) -> str:
     said -- but it is led with the category, because the useful distinction is
     whether the fix is a key, a model id, a bill, or a wait.
     """
-    raw = redact(error)
-    lowered = raw.lower()
-    for markers, hint in _ERROR_HINTS:
-        if any(marker in lowered for marker in markers):
-            return f"{provider} ({model}) failed: {hint}\n  provider said: {raw}"
-    return f"{provider} ({model}) failed: {type(error).__name__}: {raw}"
+    failure = classify_provider_error(error, provider, model)
+    hint = f"{failure.meaning} {failure.remedy}".strip()
+    return f"{provider} ({model}) failed: {hint}\n  provider said: {failure.raw}"
 
 
 def key_for(spec: ProviderSpec) -> str | None:
@@ -461,7 +655,11 @@ def _client_for(spec: ProviderSpec, model: str, api_key: str, temperature: float
 
 
 def build_provider(
-    kind: str, model: str | None = None, temperature: float = 0.2
+    kind: str,
+    model: str | None = None,
+    temperature: float = 0.2,
+    min_interval: float = 0.0,
+    on_wait: Callable[[float, str], None] | None = None,
 ) -> ToolCallingProvider:
     """Resolve a provider by name, or say exactly what is missing.
 
@@ -495,7 +693,13 @@ def build_provider(
         raise ProviderUnavailable(
             f"{spec.pip_name} is not installed. pip install {spec.pip_name}"
         ) from error
-    return LangChainToolProvider(client, name=spec.name, model=name)
+    return LangChainToolProvider(
+        client,
+        name=spec.name,
+        model=name,
+        min_interval=min_interval,
+        on_wait=on_wait,
+    )
 
 
 def gemini_provider(model: str | None = None, temperature: float = 0.2) -> ToolCallingProvider:
@@ -590,6 +794,7 @@ __all__ = [
     "LangChainToolProvider",
     "Message",
     "ProviderCallFailed",
+    "ProviderFailure",
     "ProviderSpec",
     "ProviderUnavailable",
     "ScriptedProvider",
@@ -599,12 +804,15 @@ __all__ = [
     "as_openai_tools",
     "build_provider",
     "claude_provider",
+    "classify_provider_error",
     "describe_providers",
     "explain_provider_error",
+    "first_line",
     "gemini_provider",
     "key_for",
     "keyed_providers",
     "openai_provider",
     "redact",
+    "retry_delay_in",
     "summarise_arguments",
 ]

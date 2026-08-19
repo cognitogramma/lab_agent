@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Sequence
+from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
 
 from polyrmc.agent.budget import Budget, BudgetExceeded, Usage
 from polyrmc.agent.lab import load_lab_context, system_prompt_with_lab
@@ -46,10 +46,12 @@ from polyrmc.agent.lanes import load_prompt
 from polyrmc.agent.toolcall import (
     AssistantTurn,
     Message,
+    ProviderCallFailed,
     ToolCall,
     ToolCallingProvider,
     ToolResult,
     as_openai_tools,
+    classify_provider_error,
 )
 from polyrmc.agent.toolspec import Tool, ToolContext, build_registry, schemas_for
 from polyrmc.tools import Rejected
@@ -119,7 +121,7 @@ class ApprovalPolicy:
 
 
 EventKind = Literal[
-    "text", "call", "result", "refused", "denied", "error", "capped", "spend"
+    "text", "call", "result", "refused", "denied", "error", "capped", "spend", "failed"
 ]
 
 
@@ -130,12 +132,24 @@ class Event:
     The loop returns events rather than printing, so the same orchestrator
     drives an interactive terminal, a test, and anything else later, without
     any of them inheriting the others' idea of formatting.
+
+    ``text`` is always the full account -- the whole tool output, the whole
+    provider complaint. Shortening for a terminal is the caller's job, in
+    :mod:`polyrmc.agent.transcript`, so that what is logged and what is shown
+    come from one source and the log is never the poorer of the two.
     """
 
     kind: EventKind
     text: str = ""
     tool: str = ""
     call: ToolCall | None = None
+    detail: Any = None
+    """Structured companion to ``text``, when there is one.
+
+    Carries the :class:`~polyrmc.agent.toolcall.ProviderFailure` on a ``failed``
+    event, so a caller can title the stop by category rather than re-parsing the
+    sentence it was handed.
+    """
 
     def render(self) -> str:
         # ASCII only. A Windows console is cp1252 by default, and a session that
@@ -151,7 +165,7 @@ class Event:
             return _indent(f"declined: {self.text}")
         if self.kind == "error":
             return _indent(f"tool error: {self.text}")
-        if self.kind in {"capped", "spend"}:
+        if self.kind in {"capped", "spend", "failed"}:
             return f"\n[{self.text}]"
         return self.text
 
@@ -199,53 +213,88 @@ class Orchestrator:
 
     # --- driving --------------------------------------------------------
 
-    def ask(self, user_text: str) -> list[Event]:
-        """Run one researcher turn to completion, and return what happened."""
+    def stream(self, user_text: str) -> Iterator[Event]:
+        """Run one researcher turn, yielding each event as it happens.
+
+        A generator rather than a list, for two reasons that turned out to be
+        the same reason.
+
+        **Order.** A commit stops to ask a person, and that question is asked
+        from inside the loop. A caller that collects the whole turn before
+        printing any of it therefore puts the approval prompt on screen *before*
+        the reasoning that led to it -- the researcher is asked to allow a
+        window they have not yet been told about. Read in the order things
+        occurred, the prose arrives first and the prompt follows from it.
+
+        **Survival.** Every way this turn can end -- an answer, a cap, a budget,
+        a provider that stopped answering -- ends it by yielding, never by
+        raising. :class:`ProviderCallFailed` used to escape, and since the
+        caller was holding a list it had not printed, an exception on round two
+        discarded round one entirely: tools that really ran, on a run that
+        really changed, reported as though the session had never started.
+        """
         self.messages.append(Message(role="user", text=user_text))
-        events: list[Event] = []
         turn_usage = Usage()
 
         for step in range(self.max_steps):
             try:
                 self.budget.check()
             except BudgetExceeded as error:
-                events.append(Event("capped", str(error)))
-                events.append(Event("spend", _spend_line(turn_usage, self.budget)))
-                return events
+                yield Event("capped", str(error))
+                yield Event("spend", _spend_line(turn_usage, self.budget))
+                return
 
-            turn = self._converse()
+            try:
+                turn = self._converse()
+            except ProviderCallFailed as error:
+                yield Event(
+                    "failed",
+                    str(error),
+                    detail=error.failure
+                    or classify_provider_error(error, error.provider, error.model),
+                )
+                yield Event("spend", _spend_line(turn_usage, self.budget))
+                return
+
             self.budget.record(turn.usage)
             turn_usage.add(turn.usage)
             self.messages.append(
                 Message(role="assistant", text=turn.text, tool_calls=turn.tool_calls)
             )
             if turn.text.strip():
-                events.append(Event("text", turn.text))
+                yield Event("text", turn.text)
 
             if not turn.wants_tools:
-                events.append(Event("spend", _spend_line(turn_usage, self.budget)))
-                return events
+                yield Event("spend", _spend_line(turn_usage, self.budget))
+                return
 
             results: list[ToolResult] = []
             for call in turn.tool_calls:
-                events.append(Event("call", tool=call.name, call=call))
+                yield Event("call", tool=call.name, call=call)
                 result, event = self._invoke(call)
                 results.append(result)
-                events.append(event)
+                yield event
                 self.trace.append((call, result))
 
             self.messages.append(Message(role="tool", results=results))
 
-        events.append(
-            Event(
-                "capped",
-                f"stopped after {self.max_steps} tool rounds without a final answer. "
-                "The run is wherever the last committed tool left it -- ask for "
-                "get_state to see where.",
-            )
+        yield Event(
+            "capped",
+            f"stopped after {self.max_steps} tool rounds without a final answer. "
+            "The run is wherever the last committed tool left it -- ask for "
+            "get_state to see where.",
         )
-        events.append(Event("spend", _spend_line(turn_usage, self.budget)))
-        return events
+        yield Event("spend", _spend_line(turn_usage, self.budget))
+
+    def ask(self, user_text: str) -> list[Event]:
+        """The whole turn at once, for a caller that has nothing to show.
+
+        Tests and batch callers want the turn as a value. A terminal wants it as
+        it happens and should use :meth:`stream` -- the events are identical
+        either way, so the only thing the list form costs is the ordering
+        described there.
+        """
+        return list(self.stream(user_text))
 
     def _converse(self) -> AssistantTurn:
         return self.provider.converse(self.system_prompt, self.messages, self.schemas)
@@ -302,13 +351,20 @@ class Orchestrator:
     # --- reporting ------------------------------------------------------
 
     def narrate(self) -> str:
-        """What was actually run this session, generated from the trace."""
+        """What was actually run this session, generated from the trace.
+
+        In the same words the session used while it was running. A history that
+        reads back in call syntax makes a researcher translate twice: once from
+        the line they saw, and once from the line they are reading now.
+        """
+        from polyrmc.agent.transcript import activity
+
         if not self.trace:
             return "(no tools have been called this session)"
         lines = []
         for call, result in self.trace:
-            mark = "ok " if result.ok else "REJ"
-            lines.append(f"  {mark} {call.render()}")
+            mark = "ok      " if result.ok else "refused "
+            lines.append(f"  {mark}{activity(call.name)}")
         return "\n".join(lines)
 
     @property

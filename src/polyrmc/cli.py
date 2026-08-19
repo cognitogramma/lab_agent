@@ -352,16 +352,29 @@ def _session_config(args) -> tuple[RunConfig, dict[str, Declaration], str]:
 def _ask_approval(tool, call):
     """Put one commit to the researcher.
 
-    The arguments are shown in full. An approval prompt that hides what is about
-    to change trains the reader to approve without looking, which is worse than
-    not asking at all.
+    The arguments are shown in full, one per line. An approval prompt that hides
+    what is about to change trains the reader to approve without looking, which
+    is worse than not asking at all -- so this is the one place in the session
+    where nothing is summarised.
+
+    What it no longer shows is the *call*. ``pick_window(window_length=31)`` is
+    the shape of the request going over the wire, and a person deciding whether
+    to allow a change is not reviewing a request; they are reviewing a change.
+    Same facts, named the way the rest of the session names them.
     """
     from polyrmc.agent.orchestrator import Approval
 
-    print(f"\n  commit: {call.render()}")
-    print(f"    {tool.description.splitlines()[0]}")
+    # The line above this one already named the activity, because the call event
+    # is reported before the tool runs. Repeating the phrase here made the same
+    # sentence appear twice in a row and read like two separate things
+    # happening; what this block has to add is that it *commits*, and what it
+    # will write.
+    print("\n      COMMIT -- needs your approval")
+    for key, value in call.arguments.items():
+        print(f"        {key.replace('_', ' ')}: {value}")
+    print(f"      {tool.description.splitlines()[0]}")
     try:
-        answer = input("    allow? [y]es / [n]o / [a]lways / reason: ").strip()
+        answer = input("      allow? [y]es / [n]o / [a]lways / reason: ").strip()
     except (KeyboardInterrupt, EOFError):
         return Approval(False, "interrupted")
 
@@ -387,6 +400,7 @@ REPL_HELP = """\
   /auto             approve every commit for the rest of the session
   /cost             requests and tokens spent on your key this session
   /providers        which model providers are keyed on this machine
+  /log [n]          the session log: where it is, and its last n lines
   /help             this list
   /exit             end the session"""
 
@@ -460,7 +474,7 @@ def _sign_in(spec) -> bool:
     return True
 
 
-def _resolve_provider(args, interactive: bool):
+def _resolve_provider(args, interactive: bool, on_wait=None):
     """Pick the brain for this session, offering to take a key if none is set.
 
     Order: what was asked for, else whatever is already keyed, else -- at a
@@ -499,7 +513,12 @@ def _resolve_provider(args, interactive: bool):
     if spec is not None and not key_for(spec) and interactive:
         _sign_in(spec)
 
-    return build_provider(kind, args.model)
+    return build_provider(
+        kind,
+        args.model,
+        min_interval=float(getattr(args, "min_request_interval", 0.0) or 0.0),
+        on_wait=on_wait,
+    )
 
 
 def _check_key(kind: str, model: str | None = None) -> tuple[bool, str]:
@@ -753,6 +772,46 @@ def run_plot(args) -> int:
     return 0
 
 
+def _log_warnings_to(log) -> None:
+    """Send Python warnings to the session log instead of the terminal.
+
+    Provider SDKs warn about their own internals -- one of them announces that
+    the model ignores ``temperature``, once per request -- and those lines
+    arrive interleaved with the conversation, look like the session complaining
+    about the run, and are about neither. They are still worth keeping, so they
+    go where the rest of the background work goes.
+    """
+    import warnings
+
+    def show(message, category, filename, lineno, file=None, line=None):
+        log.write(
+            f"warning {category.__name__}",
+            f"{message}\n  from {filename}:{lineno}",
+        )
+
+    warnings.showwarning = show
+
+
+def _tail_log(log, argument: str = "") -> str:
+    """The log's location, and its last few lines.
+
+    Reading the file back rather than replaying a buffer, so what ``/log`` shows
+    is what a colleague opening the file would see.
+    """
+    try:
+        count = max(1, int(argument))
+    except (TypeError, ValueError):
+        count = 20
+    if log.path is None or not log.path.exists():
+        return f"session log: {log.location}"
+    try:
+        lines = log.path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as error:
+        return f"session log: {log.location} (cannot be read back: {error})"
+    body = "\n".join(lines[-count:])
+    return f"session log: {log.location}\n\n{body}"
+
+
 def run_agent(args) -> int:
     """The agent session: the model drives, and commits go through you.
 
@@ -767,7 +826,11 @@ def run_agent(args) -> int:
         allow_all,
         deny_all,
     )
-    from polyrmc.agent.toolcall import ProviderCallFailed, ProviderUnavailable
+    # ProviderUnavailable only: a session that cannot start is this function's
+    # problem, while a provider that dies mid-session is now the orchestrator's
+    # -- it comes back as a ``failed`` event so the work already done comes back
+    # with it, rather than as an exception that unwinds past the events.
+    from polyrmc.agent.toolcall import ProviderUnavailable
     from polyrmc.agent.toolspec import (
         ToolContext,
         build_registry,
@@ -775,6 +838,7 @@ def run_agent(args) -> int:
         describe_registry,
         render_state,
     )
+    from polyrmc.agent.transcript import Narrator, SessionLog, error_block
     from polyrmc.memory.notes import NoteBook
     from polyrmc.memory.registry import RunRegistry
     from polyrmc.state import RunState
@@ -813,9 +877,24 @@ def run_agent(args) -> int:
     if args.auto_approve:
         policy.ask = allow_all
 
+    log = SessionLog()
+    narrator = Narrator(log, verbose=bool(getattr(args, "verbose", False)))
+    _log_warnings_to(log)
+
+    def announce_wait(seconds: float, reason: str) -> None:
+        """Say that the session is waiting, rather than appearing to hang.
+
+        A rate limit can ask for the better part of a minute. Silence for that
+        long, in the middle of a run that has been printing a line every few
+        seconds, reads as a crash -- and a researcher who kills it loses a
+        conversation that cost real tokens to build.
+        """
+        print(f"  ... waiting {seconds:.0f}s: {reason}")
+        log.write("rate limit", f"waiting {seconds:.1f}s -- {reason}")
+
     registry = build_registry()
     try:
-        provider = _resolve_provider(args, interactive)
+        provider = _resolve_provider(args, interactive, on_wait=announce_wait)
     except ProviderUnavailable as error:
         print(f"\n{error}")
         print(
@@ -850,26 +929,87 @@ def run_agent(args) -> int:
     else:
         agent = None
     print(f"memory: {indexed} past run(s) in {runs_dir}, {len(notes)} note(s)")
+    # Named on the way in as well as on the way out, so a researcher who wants
+    # the detail knows where it is before they need it rather than after.
+    print(f"working notes: {log.location}")
+    log.banner(
+        run=run_id,
+        model=f"{provider.name} / {provider.model}" if provider else "none configured",
+        tools=registry_size,
+        lab_context=str(agent.lab_path) if agent else "",
+        runs_dir=str(runs_dir),
+    )
     if not args.auto_approve:
         print("commits need your approval. /help for commands.\n")
     else:
         print("--auto-approve: every commit runs unattended and is recorded.\n")
 
+    def report(events) -> str:
+        """Show one turn, and say how it ended.
+
+        Three outcomes, because two different questions are asked of the answer.
+        ``"dead"`` means the brain is gone and the session is over. ``"capped"``
+        means this turn stopped without answering -- a budget or the step limit
+        -- which a person at a terminal recovers from by raising the ceiling and
+        asking again, and a script cannot recover from at all. ``"ok"`` means it
+        answered. Collapsing the last two loses the case a batch caller most
+        needs to detect: a question that returned quietly having answered
+        nothing.
+
+        A stop is not narrated as though the model had said it. It comes out as
+        a banner with the reason, what to do about it, and where the provider's
+        own words are -- the four hundred characters of JSON that used to land
+        in the middle of a transcript.
+        """
+        outcome = "ok"
+        for event in events:
+            narrator.show(event)
+            if event.kind == "failed":
+                failure = event.detail
+                print(
+                    error_block(
+                        failure.headline if failure else "the model call failed",
+                        (failure.meaning if failure else str(event.text))
+                        + f" {budget.render('Spent before it stopped', nudge=False)}.",
+                        failure.remedy if failure else "",
+                        log.location,
+                    )
+                )
+                outcome = "dead"
+            elif event.kind == "capped":
+                print(
+                    error_block(
+                        "stopped without answering",
+                        f"{event.text} {budget.render('Spent', nudge=False)}.",
+                        "Raise the ceiling and ask again, or run `polyrmc "
+                        "process` for the whole deterministic path with no "
+                        "model at all.",
+                        log.location,
+                    )
+                )
+                if outcome == "ok":
+                    outcome = "capped"
+        return outcome
+
     if not interactive:
         if agent is None:
+            log.close()
             return 2
         question = args.prompt or "Summarise where this run stands and what it needs."
+        narrator.user(question)
         try:
-            for event in agent.ask(question):
-                print(event.render())
-        except ProviderCallFailed as error:
-            print(f"\n{error}")
-            print(budget.render("spent before the failure"))
+            outcome = report(agent.stream(question))
+        except Exception as error:  # a bug here must not cost the record
+            log.write("session error", f"{type(error).__name__}: {error}")
+            print(error_block("the session failed", f"{type(error).__name__}: {error}",
+                              "", log.location))
+            log.close()
             return 2
-        except Exception as error:
-            print(f"the model call failed: {type(error).__name__}: {error}")
-            return 2
-        return 0
+        log.close()
+        # Anything short of an answer is a non-zero exit. A script that asked a
+        # question and got a banner instead has not been answered, and telling
+        # it otherwise is how a caller ends up treating a spent key as a result.
+        return 0 if outcome == "ok" else 2
 
     while True:
         try:
@@ -909,6 +1049,8 @@ def run_agent(args) -> int:
                 print("every commit will now run without asking.")
             elif command == "cost":
                 print(budget.render())
+            elif command == "log":
+                print(_tail_log(log, rest))
             elif command == "providers":
                 from polyrmc.agent.toolcall import describe_providers
 
@@ -924,10 +1066,25 @@ def run_agent(args) -> int:
             print("no model is configured, so there is nothing to ask. /help\n")
             continue
 
+        narrator.user(line)
         try:
-            for event in agent.ask(line):
-                print(event.render())
-        except ProviderCallFailed as error:
+            outcome = report(agent.stream(line))
+        except Exception as error:  # a bug here must not cost the transcript
+            log.write("session error", f"{type(error).__name__}: {error}")
+            print(
+                error_block(
+                    "the session hit a bug",
+                    f"{type(error).__name__}: {error}",
+                    "Nothing committed is lost. /state shows where the run "
+                    "stands, and `polyrmc process` runs the whole deterministic "
+                    "path with no model at all.",
+                    log.location,
+                )
+            )
+            outcome = "ok"  # a fault in this loop is not a dead provider
+        # A cap is recoverable at a terminal -- raise it and ask again -- so
+        # only a provider that stopped answering ends the session here.
+        if outcome == "dead":
             # The brain is gone, so the session is over. Tool faults are handled
             # inside the orchestrator and fed back for the model to correct;
             # nothing can correct a provider that will not answer, and looping
@@ -935,20 +1092,20 @@ def run_agent(args) -> int:
             # onto a second provider on purpose: these are the researcher's own
             # tokens, and moving their session to another of their keys is a
             # spending decision that is theirs to make.
-            print(f"\n{error}")
-            print("\nsession ended. Nothing committed is lost -- /state on the next")
-            print("session shows where this run stands, and `polyrmc process` runs")
-            print("the whole deterministic path with no model at all.")
+            print(
+                "\nsession ended. Nothing committed is lost -- /state on the next\n"
+                "session shows where this run stands."
+            )
             break
-        except Exception as error:  # a bug here must not cost the transcript
-            print(f"  model call failed: {type(error).__name__}: {error}")
         print()
 
     # Printed unconditionally on the way out, including after an interrupt. A
     # spend figure that only appears on a clean exit is missing from exactly the
-    # sessions that ran away.
+    # sessions that ran away, and the same goes for where the detail went.
     if agent is not None:
         print(budget.render("spent this session"))
+    print(f"working notes: {log.location}")
+    log.close()
     return 0
 
 
@@ -1098,6 +1255,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--notes-dir",
         help="Where session notes are kept. Defaults to data/memory.",
+    )
+    parser.add_argument(
+        "--min-request-interval",
+        type=float,
+        default=float(os.environ.get("POLYRMC_MIN_REQUEST_INTERVAL", "0") or 0),
+        help="Seconds to leave between model requests. A free tier rations "
+        "requests per minute and an agent spends one per tool round, so a "
+        "session doing real work trips that ceiling within a few rounds; 13 "
+        "paces a 5-per-minute limit. 0 (the default) does not wait.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Also print the session's background work -- full tool output and "
+        "per-turn token counts -- which otherwise only goes to the session log.",
     )
     parser.add_argument(
         "--prompt",

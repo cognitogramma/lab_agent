@@ -63,7 +63,33 @@ polyrmc agent --raw <file> --declarations <f>    # a session over a nominated ru
 ```
 
 Slash commands: `/state`, `/tools`, `/history`, `/runs [query]`, `/notes
-[query]`, `/always <tool>`, `/auto`, `/providers`, `/help`, `/exit`.
+[query]`, `/always <tool>`, `/auto`, `/cost`, `/providers`, `/log [n]`, `/help`,
+`/exit`.
+
+**What it prints is an account, not a trace.** The session shows what the model
+said and one plain line per action:
+
+```
+  Let me see where this run stands before touching anything.
+
+  . checking where the run stands
+  . loading and cleaning the raw file
+  . sweeping the smoothing windows
+
+  The run is loaded and the safe band is computed. Nothing is committed yet.
+```
+
+Everything underneath that — call arguments, whole tool outputs, per-turn token
+counts, warnings raised inside a provider's SDK, and the provider's own error
+text — goes to a session log under `data/logs/`, named on the way in and on the
+way out. `/log` shows where it is and its last few lines; `--verbose` puts the
+lot back on screen.
+
+Two things are never summarised. A **refusal** is printed whole, because the
+tool surface writes its rejections as recovery instructions and the band it
+names is the useful part. An **approval prompt** is printed whole, because a
+prompt that hides what is about to change trains you to approve without
+looking.
 
 ## Bring your own tokens
 
@@ -99,14 +125,44 @@ another of your keys, because that is your money and the decision to spend it is
 yours. Nothing committed is lost; the next session's `/state` shows where the
 run stands.
 
+A stop is a banner, not a message from the model, and it never reads like one:
+
+```
+------------------------------------------------------------------
+  OUT OF QUOTA
+------------------------------------------------------------------
+  That key is out of quota or over its rate limit. Spent before it stopped: 3
+  request(s), 14,600 in, 270 out.
+
+  What to do: This is a buy-your-own-tokens setup, so the fix is on the account
+  the key belongs to -- top it up, wait out the window, or start again on
+  another --provider you hold a key for.
+
+  full detail: data/logs/session-20260818-234923.log
+------------------------------------------------------------------
+```
+
+**Whatever already ran is still reported.** A key that expires on round four
+does not erase rounds one to three: the tools that ran, ran, and the session
+prints them before the banner.
+
+A non-interactive session exits `0` only when it answered. A dead provider, a
+budget ceiling and the step cap all exit `2` — a script that asked a question
+and got a banner has not been answered, and a zero there is how a caller ends up
+treating a spent key as a result. At a terminal only a dead provider ends the
+session; a ceiling is something you raise and ask again.
+
 ## What a session costs
 
-It runs on your key, so it tells you what it spent. Every turn ends with a line,
-and `/cost` gives the session total:
+It runs on your key, so it tells you what it spent — once at the end of the
+session, and on demand from `/cost`, rather than after every turn:
 
 ```
-[this turn: 3 request(s), 35,420 in / 320 out  |  session: 3 request(s), ...]
+spent this session: 3 request(s), 35,420 in, 320 out
 ```
+
+The per-turn figures are in the session log, where a question that turned out to
+be expensive can be traced back to the round that made it so.
 
 Two figures because two different limits bite.
 
@@ -129,6 +185,32 @@ Ceilings, checked *before* each call rather than reported after:
 --budget-requests 20     # or POLYRMC_BUDGET_REQUESTS
 --budget-tokens 200000   # or POLYRMC_BUDGET_TOKENS
 ```
+
+### The limit you will hit first is per *minute*
+
+A free tier rations requests per minute as well as per day — Gemini's flash
+models allow **5 a minute and 20 a day, per model id**. An agent spends one
+request per tool round, so a session doing real work trips the per-minute
+ceiling around round five with its daily allowance barely touched.
+
+These are opposite problems and the session tells them apart. A daily quota is
+spent and the fix costs money. A per-minute limit is only impatience: the
+session waits the number of seconds the provider itself named and carries on.
+That is the one place it retries, and it costs nothing — a rate-limited request
+was *refused*, not served, so there are no tokens to pay for twice.
+
+Cheaper than being refused is not asking too fast in the first place:
+
+```bash
+--min-request-interval 13    # or POLYRMC_MIN_REQUEST_INTERVAL; paces a 5/min limit
+```
+
+Two more things follow from the per-model daily cap. A full end-to-end session
+costs 12–19 rounds, so one model id is roughly one session a day on a free key —
+and `--model` moves you onto a different allowance. And prompting the model to
+**batch independent steps** into one turn genuinely helps: asked to decide seven
+flagged regions one at a time it spends seven requests, asked to decide them
+together it spends one.
 
 Cost in currency is opt-in — set `POLYRMC_RATES="in=0.30,out=2.50"` (per million
 tokens, from your provider's current pricing). Token counts are measured and are
@@ -182,6 +264,7 @@ src/polyrmc/
   agent/  orchestrator  the agent loop: model → tool calls → results → repeat
           toolspec      tool schemas, dispatch, and compact result rendering
           toolcall      provider-neutral tool-calling transport
+          transcript    what a person reads; everything else to data/logs/
           lanes         the two-lane numeric/visual judge
           lab           LAB.md, loaded whole into every session
 
