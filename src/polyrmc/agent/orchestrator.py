@@ -41,8 +41,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
 
 from polyrmc.agent.budget import Budget, BudgetExceeded, Usage
-from polyrmc.agent.lab import load_lab_context, system_prompt_with_lab
-from polyrmc.agent.lanes import load_prompt
+from polyrmc.agent.lab import (
+    load_lab_context,
+    load_prompt,
+    system_prompt_with_lab,
+)
 from polyrmc.agent.toolcall import (
     AssistantTurn,
     Message,

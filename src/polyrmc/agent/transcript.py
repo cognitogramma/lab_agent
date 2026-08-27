@@ -95,12 +95,18 @@ def activity(name: str) -> str:
     return ACTIVITY.get(name, name.replace("_", " "))
 
 
-def _hint(arguments: dict[str, Any]) -> str:
-    """A short parenthetical naming what the call is about.
+def hint(arguments: dict[str, Any]) -> str:
+    """A short phrase naming what one call is about, or "" if nothing fits.
 
-    Values, not the call. ``(window length 31)`` tells a reader which window was
+    Values, not the call. ``window length 31`` tells a reader which window was
     chosen; ``pick_window(window_length=31)`` tells them the same thing in the
     shape of a function call they did not write and cannot run.
+
+    It returns the phrase bare, without the parentheses the terminal sets it in.
+    Deciding what is worth saying and deciding how it sits in a line are
+    different jobs, and the window sets the same phrase in a different way --
+    smaller and greyer, after the activity, where a console has only punctuation
+    to work with.
     """
     if not arguments:
         return ""
@@ -119,7 +125,7 @@ def _hint(arguments: dict[str, Any]) -> str:
     joined = ", ".join(parts)
     if len(joined) > HINT_LIMIT:
         joined = joined[: HINT_LIMIT - 3] + "..."
-    return f" ({joined})"
+    return joined
 
 
 def first_sentence(text: str, limit: int = 200) -> str:
@@ -246,7 +252,8 @@ class Narrator:
                 if arguments
                 else "(no arguments)",
             )
-            return [f"{BULLET}{activity(event.tool)}{_hint(arguments)}"]
+            aside = hint(arguments)
+            return [f"{BULLET}{activity(event.tool)}" + (f" ({aside})" if aside else "")]
 
         if kind == "result":
             self.log.write(f"result {event.tool}", event.text)
@@ -356,4 +363,5 @@ __all__ = [
     "default_log_path",
     "error_block",
     "first_sentence",
+    "hint",
 ]

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from polyrmc.config import RunConfig
-from polyrmc.state import JudgeDecision, LoopState, RunState
+from polyrmc.state import LoopState, RunState
 
 SIDECAR_SUFFIX = ".provenance.json"
 
@@ -98,17 +98,6 @@ def build_record(state: RunState, config: RunConfig) -> dict[str, Any]:
             if state.m0 is not None
             else None
         ),
-        "judge": {
-            "status": state.judge_status,
-            "llm_lane": (
-                json.loads(state.llm_lane.model_dump_json()) if state.llm_lane else None
-            ),
-            "vlm_lane": (
-                json.loads(state.vlm_lane.model_dump_json()) if state.vlm_lane else None
-            ),
-            "lanes_disagreed": state.lanes_disagreed,
-            "fallback_taken": state.fallback_taken,
-        },
         "execution_history": state.execution_history,
         "loops": {
             name: json.loads(loop.model_dump_json())
@@ -137,28 +126,20 @@ def load_sidecar(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def replay_decisions(record: dict[str, Any], loop_name: str) -> list[JudgeDecision]:
-    """Recover the decisions a named loop made, for replay without a model call."""
-    loop = record.get("loops", {}).get(loop_name)
-    if loop is None:
-        raise KeyError(f"no recorded loop named {loop_name!r} in this provenance record")
-    return [JudgeDecision.model_validate(decision) for decision in loop["decisions"]]
-
-
 def summarize_loop(loop: LoopState) -> str:
-    """One-line human summary of how a loop resolved.
+    """One-line human summary of how a selection resolved.
 
-    Reported in run output so the judge-versus-fallback distinction is visible
-    without opening the sidecar.
+    Reported in run output so that "nothing passed the gates" is visible
+    without opening the sidecar. That distinction is the one worth surfacing:
+    a run with no usable candidate has not measured anything, and it should not
+    take reading a JSON file to find that out.
     """
-    if loop.used_fallback:
+    if loop.used_fallback or loop.resolved_value is None:
         return (
-            f"{loop.name}: fell back to the conservative option "
-            f"({loop.resolved_value!r}) after {loop.iterations_used} iteration(s) "
-            f"-- {loop.fallback_reason}"
+            f"{loop.name}: nothing chosen -- {loop.fallback_reason or 'no candidate'}"
         )
-    n_rejected = sum(len(d.rejected_indices) for d in loop.decisions)
+    offered = sum(len(batch) for batch in loop.candidates_by_iteration)
     return (
-        f"{loop.name}: judge selected {loop.resolved_value!r} in "
-        f"{loop.iterations_used} iteration(s), {n_rejected} candidate(s) rejected"
+        f"{loop.name}: took {loop.resolved_value!r} from {offered} certified "
+        "candidate(s)"
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.config import FitRangeConfig, LoopConfig
+from polyrmc.config import FitRangeConfig
 from polyrmc.tier0.fit_range import (
     apply_fit_range,
     conservative_fit_range,
@@ -13,12 +13,10 @@ from polyrmc.tier0.fit_range import (
     lag1_autocorrelation,
     propose_fit_ranges,
     residual_runs_z,
-    sorted_finite,
-)
+    sorted_finite)
 from polyrmc.tier0.optics import optical_constant
 from polyrmc.tier0.virial import build_kc_over_i, fit_virial
 from polyrmc.tier1.fit_range_selector import select_fit_range
-from polyrmc.tier1.judge import StaticJudge
 
 from conftest import OVERLAP_C, TRUE_A2, TRUE_MW, ideal_intensity
 
@@ -122,10 +120,7 @@ def test_selected_range_reproduces_a2_mw_end_to_end(curved_dataset):
     loop = select_fit_range(
         concentration,
         ordinate,
-        fit_config=FitRangeConfig(min_points=30),
-        loop_config=LoopConfig(max_iterations=2),
-        judge=StaticJudge(),
-    )
+        fit_config=FitRangeConfig(min_points=30))
     c_fit, y_fit = apply_fit_range(concentration, ordinate, float(loop.resolved_value))
     fit = fit_virial(c_fit, y_fit, order=1)
 
@@ -133,22 +128,36 @@ def test_selected_range_reproduces_a2_mw_end_to_end(curved_dataset):
     assert loop.resolved_value is not None
 
 
-def test_loop_records_rejected_candidates_alongside_the_winner(curved_dataset):
+def test_the_record_keeps_the_ranges_that_were_not_taken(curved_dataset):
+    """The rejects are the claim, so the record has to outlive the choice.
+
+    It used to be asserted against a judge's decision log. There is no judge on
+    this path any more -- the conservative range is taken deterministically --
+    but the requirement did not go away with it: where the linear region ends
+    sets A2 directly, so a reviewer has to be able to see every range that
+    passed the gates and was still not used.
+    """
     concentration, ordinate = curved_dataset
 
     loop = select_fit_range(
         concentration,
         ordinate,
-        fit_config=FitRangeConfig(min_points=30),
-        judge=StaticJudge(),
+        fit_config=FitRangeConfig(min_points=30))
+
+    offered = loop.candidates_by_iteration[0]
+    assert len(offered) > 1, "a set of one is not a choice, and cannot be reviewed"
+    assert loop.resolved_value in [c.value for c in offered], (
+        "the range taken must be one of the ranges offered, never a new one"
     )
 
-    assert loop.decisions, "the trajectory must be recorded"
-    decision = loop.decisions[0]
-    offered = len(loop.candidates_by_iteration[0])
-    assert len(decision.rejected_indices) == offered - 1, (
-        "which points were excluded from the linear region is the scientific claim"
-    )
+    not_taken = [c for c in offered if c.value != loop.resolved_value]
+    assert len(not_taken) == len(offered) - 1
+    # Each one still carries what it was rejected in favour of being narrower
+    # than: the bound, the points it kept, and how linear it was over them.
+    for candidate in not_taken:
+        assert candidate.features["c_max"] > loop.resolved_value
+        assert candidate.features["n_points"] > 0
+    assert not loop.used_fallback
 
 
 def test_too_few_points_yields_no_candidates_rather_than_a_bad_fit():

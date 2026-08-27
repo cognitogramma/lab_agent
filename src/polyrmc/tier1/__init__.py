@@ -1,20 +1,31 @@
-"""Tier 1 -- bounded evaluator loops.
+"""Tier 1 -- selection among candidates that tier 0 has already certified.
 
-Each loop proposes deterministically and judges subjectively:
+The proposer generates a candidate set that is safe by construction, and the
+conservative option is taken from it. **Nothing here constructs a candidate**,
+and nothing here consults a model.
 
-    propose -> judge -> re-propose, at most N iterations
+There used to be a bounded propose-judge-re-propose harness in this package, so
+that a judge could pick among the certified options and ask for a re-proposal.
+The agent picks now, and it picks through the tool surface instead --
+``sweep_windows`` offers the band as data, ``pick_window`` validates the choice
+against it, and an invalid choice comes back as a refusal the model can read and
+correct. That is the same guarantee with a better boundary, and keeping a second
+mechanism for it meant two places to check whether a model could reach past the
+gates.
 
-The proposer generates a candidate set that is safe by construction. The judge
-selects among candidates, or asks for a re-proposal with a direction hint. **It
-cannot construct a candidate.** Loops are capped, and on exhaustion fall back to
-the most conservative safe option.
-
-Rejected candidates are logged alongside accepted ones. For fit-range selection
-that is the entire point: which points were excluded from the linear region is
-the scientific claim, and a reviewer must be able to see it.
+Rejected candidates are still logged alongside accepted ones. For fit-range
+selection that is the entire point: which points were excluded from the linear
+region is the scientific claim, and a reviewer must be able to see it.
 """
 
-from polyrmc.tier1.loop import run_bounded_loop
-from polyrmc.tier1.judge import ModelJudge, RecordedJudge, StaticJudge
+from polyrmc.tier1.fit_range_selector import select_fit_range
+from polyrmc.tier1.smoothing_selector import (
+    conservative_window_candidate,
+    select_smoothing_window,
+)
 
-__all__ = ["run_bounded_loop", "ModelJudge", "RecordedJudge", "StaticJudge"]
+__all__ = [
+    "conservative_window_candidate",
+    "select_fit_range",
+    "select_smoothing_window",
+]

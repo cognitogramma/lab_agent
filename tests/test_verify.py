@@ -11,14 +11,13 @@ import pytest
 
 from polyrmc.pipeline import run_part1
 from polyrmc.state import Conflict, Declaration
-from polyrmc.tier1.judge import StaticJudge
 from polyrmc.verify import summarize, verify_output
 
 
 @pytest.fixture
 def verified(run_config, tmp_path):
     state, csv_path = run_part1(
-        run_config, judge=StaticJudge(), output_csv=tmp_path / "v.csv"
+        run_config, output_csv=tmp_path / "v.csv"
     )
     return state, csv_path
 
@@ -118,8 +117,7 @@ def test_a_resolved_conflict_does_not_fail(verified):
             observed="b",
             resolved=True,
             resolution_reason="explained",
-            resolved_by="arnold",
-        )
+            resolved_by="arnold")
     ]
     assert (
         by_name(verify_output(csv_path, state), "declarations consistent").status
@@ -152,7 +150,7 @@ def test_a_run_with_real_censoring_passes_the_censoring_check(run_config, tmp_pa
     config = run_config.model_copy(deep=True)
     config.detectors.saturation_ceiling = 4200.0
     state, csv_path = run_part1(
-        config, judge=StaticJudge(), output_csv=tmp_path / "c2.csv"
+        config, output_csv=tmp_path / "c2.csv"
     )
 
     assert state.censored_indices, "expected the opening samples to be censored"
@@ -165,7 +163,7 @@ def test_a_ceiling_below_the_whole_trace_is_refused(run_config, tmp_path):
     config.detectors.saturation_ceiling = 1.0
 
     with pytest.raises(ValueError, match="nothing here to analyse"):
-        run_part1(config, judge=StaticJudge(), output_csv=tmp_path / "c3.csv")
+        run_part1(config, output_csv=tmp_path / "c3.csv")
 
 
 def test_m0_sensitivity_is_reported_every_run(verified):

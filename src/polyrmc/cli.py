@@ -1,6 +1,7 @@
 """Command-line entry point.
 
     python -m polyrmc.cli agent
+    python -m polyrmc.cli gui
     python -m polyrmc.cli agent --raw data/raw/<file> --declarations run.decl.json
     python -m polyrmc.cli intake --raw data/raw/<file> --declarations run.decl.json
     python -m polyrmc.cli process --raw data/raw/<file> --declarations run.decl.json
@@ -12,7 +13,8 @@
 model drives: it reads the run, searches what the lab did before, and calls the
 tools it needs, stopping to ask you before anything commits. Started with no
 arguments it is still useful -- searching past experiments does not need a file
-in hand.
+in hand. ``gui`` is that same session in a window, with the run state and the
+figures beside the conversation instead of recalled on demand.
 
 ``intake`` is the section 6.0 interview: it asks what the run is, records each
 answer with an author and a timestamp, then checks those answers against the
@@ -21,8 +23,8 @@ Neither makes a model call or needs an API key, and neither has changed: the
 deterministic path is the same path whether a model chose to walk it or a
 researcher typed the command.
 
-The tier-1 judge defaults to :class:`StaticJudge` unless ``--judge model`` is
-passed, so every non-agent stage is fully runnable offline.
+No stage but ``agent`` consults a model at all: ``intake``, ``process``,
+``part1``, ``part2`` and ``plot`` are pure measurement and need no key.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -49,9 +52,7 @@ from polyrmc.provenance import summarize_loop
 from polyrmc.state import Declaration
 from polyrmc.tier0.argen_io import DEFAULT_CHANNEL, load_argen_file
 from polyrmc.tier0.consistency import check_declarations
-from polyrmc.tier1.judge import ModelJudge, StaticJudge
 from polyrmc.verify import summarize, verify_output
-from polyrmc.tier1.loop import Judge
 
 
 def read_json(path: str | Path) -> dict:
@@ -67,26 +68,6 @@ def read_json(path: str | Path) -> dict:
 def load_config(path: str | Path) -> RunConfig:
     """Load a run configuration from JSON."""
     return RunConfig.model_validate(read_json(path))
-
-
-def make_judge(kind: str, decision_name: str, config: RunConfig) -> Judge:
-    """Build the judge for a loop, refusing to pretend a model call happened."""
-    if kind == "static":
-        return StaticJudge()
-    # ModelJudge speaks to Gemini through langchain_google_genai, which reads
-    # either of these. Naming the wrong provider's variable here made
-    # `--judge model` unusable no matter how the key was set.
-    if not (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")):
-        raise SystemExit(
-            "--judge model requires GOOGLE_API_KEY (or GEMINI_API_KEY), which you "
-            "supply.\n"
-            "  polyrmc setup            take a key and store it\n"
-            "  --judge static           the deterministic conservative rule, no key\n"
-            "Get a Gemini key from https://aistudio.google.com/apikey\n"
-            "Note this judge is Gemini-only: it predates the --provider table that "
-            "the agent session uses, and has not been moved onto it."
-        )
-    return ModelJudge(decision_name, config=config.loop)
 
 
 def _ask(question, author: str) -> object | None:
@@ -284,9 +265,7 @@ def run_process(args) -> int:
             "physical explanation and want it on the record."
         )
         return 2
-
-    judge = make_judge(args.judge, "smoothing_window", config)
-    state, csv_path = run_part1(config, judge=judge, output_csv=args.out)
+    state, csv_path = run_part1(config, output_csv=args.out)
     state.declarations = declarations
     state.declaration_conflicts = report.conflicts
     if report.unresolved and args.force:
@@ -346,6 +325,62 @@ def _session_config(args) -> tuple[RunConfig, dict[str, Declaration], str]:
             "polysaccharide, and guessing it would process the run under a "
             "physical model nobody chose"
         ]
+    )
+
+
+@dataclass
+class Session:
+    """The run surface one agent session acts on, and what it was built from."""
+
+    config: "RunConfig"
+    declarations: dict
+    run_id: str
+    surface: object
+    context: object
+    notes: object
+    runs_dir: Path
+
+
+def open_session(args) -> Session:
+    """Build the run surface from the arguments a session was started with.
+
+    Shared by the terminal session and the window, deliberately. Two
+    constructions of the same run would eventually disagree -- a declaration
+    applied in one and not the other, a runs directory resolved differently --
+    and the disagreement would show up as a run analysed one way at a prompt and
+    another way in a window. There is one way to open a run and this is it.
+    """
+    from polyrmc.agent.toolspec import ToolContext, default_ledger_path
+    from polyrmc.memory.notes import NoteBook
+    from polyrmc.state import RunState
+    from polyrmc.tools import ToolSurface
+
+    config, declarations, run_id = _session_config(args)
+
+    state = RunState(run_id=run_id, source_file=str(args.raw or "none"))
+    state.declarations = dict(declarations)
+    surface = ToolSurface(state=state, config=config)
+    for key, declaration in declarations.items():
+        surface.declarations.declarations[key] = declaration
+    surface.declarations.refresh_form()
+
+    runs_dir = Path(args.runs_dir) if args.runs_dir else paths.runs_dir()
+    notes = NoteBook(args.notes_dir)
+    return Session(
+        config=config,
+        declarations=declarations,
+        run_id=run_id,
+        surface=surface,
+        context=ToolContext(
+            surface=surface,
+            notes=notes,
+            runs_dir=runs_dir,
+            ledger_path=default_ledger_path(),
+            author=str(args.author or "researcher"),
+            output_csv=Path(args.out) if args.out else None,
+        ),
+        notes=notes,
+        runs_dir=runs_dir,
     )
 
 
@@ -590,7 +625,7 @@ def run_setup(args) -> int:
     # be told they are already finished.
     print(
         "\nNone of this is needed for `polyrmc intake`, `polyrmc process`, or "
-        "`--judge static`,\nwhich run the whole measurement path with no model "
+        "`polyrmc process`,\nwhich runs the whole measurement path with no model "
         "and no key."
     )
 
@@ -831,21 +866,12 @@ def run_agent(args) -> int:
     # -- it comes back as a ``failed`` event so the work already done comes back
     # with it, rather than as an exception that unwinds past the events.
     from polyrmc.agent.toolcall import ProviderUnavailable
-    from polyrmc.agent.toolspec import (
-        ToolContext,
-        build_registry,
-        default_ledger_path,
-        describe_registry,
-        render_state,
-    )
+    from polyrmc.agent.toolspec import build_registry, describe_registry, render_state
     from polyrmc.agent.transcript import Narrator, SessionLog, error_block
-    from polyrmc.memory.notes import NoteBook
     from polyrmc.memory.registry import RunRegistry
-    from polyrmc.state import RunState
-    from polyrmc.tools import ToolSurface
 
     try:
-        config, declarations, run_id = _session_config(args)
+        session = open_session(args)
     except MissingDeclarations as error:
         print(f"cannot start: {error}")
         print(
@@ -854,23 +880,11 @@ def run_agent(args) -> int:
         )
         return 2
 
-    state = RunState(run_id=run_id, source_file=str(args.raw or "none"))
-    state.declarations = dict(declarations)
-    surface = ToolSurface(state=state, config=config)
-    for key, declaration in declarations.items():
-        surface.declarations.declarations[key] = declaration
-    surface.declarations.refresh_form()
-
-    runs_dir = Path(args.runs_dir) if args.runs_dir else paths.runs_dir()
-    notes = NoteBook(args.notes_dir)
-    context = ToolContext(
-        surface=surface,
-        notes=notes,
-        runs_dir=runs_dir,
-        ledger_path=default_ledger_path(),
-        author=str(args.author or "researcher"),
-        output_csv=Path(args.out) if args.out else None,
-    )
+    surface = session.surface
+    context = session.context
+    notes = session.notes
+    runs_dir = session.runs_dir
+    run_id = session.run_id
 
     interactive = sys.stdin.isatty() and not args.no_prompt
     policy = ApprovalPolicy(ask=_ask_approval if interactive else deny_all)
@@ -1136,6 +1150,21 @@ def _verify(state, csv_path, config) -> int:
     return 0
 
 
+def run_gui(args) -> int:
+    """The same session, in a window.
+
+    Everything the terminal session enforces is enforced there too, because it
+    is the same orchestrator over the same tool surface: commits go through the
+    approval policy, refusals arrive whole, the loop is capped, and the log
+    under ``data/logs`` is written by the same narrator. What the window adds is
+    the run state permanently on screen and the figures beside the conversation
+    that produced them.
+    """
+    from polyrmc.gui import launch
+
+    return launch(args)
+
+
 def run_chat(args) -> int:
     """``chat`` and ``agent`` are the same session under two names.
 
@@ -1175,13 +1204,15 @@ def main(argv: list[str] | None = None) -> int:
             "process",
             "plot",
             "agent",
+            "gui",
             "chat",
             "part1",
             "part2",
             "run",
         ],
         help="setup takes an API key and stores it; intake, process and plot are "
-        "the measurement path and need no key; agent is the session.",
+        "the measurement path and need no key; agent is the session, and gui is "
+        "the same session in a window with the figures beside it.",
     )
     parser.add_argument("--file", help="Data file to open or plot (plot only).")
     parser.add_argument("--x", help="Column for the x axis (plot only).")
@@ -1217,12 +1248,6 @@ def main(argv: list[str] | None = None) -> int:
         "--no-prompt",
         action="store_true",
         help="Never prompt; print the outstanding questions and stop.",
-    )
-    parser.add_argument(
-        "--judge",
-        choices=["static", "model"],
-        default="static",
-        help="Tier-1 judge. 'static' takes the conservative option without a model.",
     )
     parser.add_argument(
         "--provider",
@@ -1333,7 +1358,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("process requires --raw and --declarations")
         return run_process(args)
 
-    if args.stage == "agent":
+    if args.stage in {"agent", "gui"}:
         # No required arguments. An agent session with no run nominated is a
         # normal way to start -- searching what the lab did before does not need
         # a file in hand -- and the agent reports the run as unloaded until it
@@ -1343,15 +1368,14 @@ def main(argv: list[str] | None = None) -> int:
                 "--raw and --declarations go together: a run is analysed under "
                 "what a person declared it to be, never under one without the other"
             )
-        return run_agent(args)
+        return run_gui(args) if args.stage == "gui" else run_agent(args)
 
     if not args.config:
         parser.error(f"{args.stage} requires --config")
     config = load_config(args.config)
 
     if args.stage in {"part1", "run"}:
-        judge = make_judge(args.judge, "smoothing_window", config)
-        state, csv_path = run_part1(config, channel=args.channel, judge=judge)
+        state, csv_path = run_part1(config, channel=args.channel)
         _report(state, f"part 1 complete -> {csv_path}")
         if args.verify and _verify(state, csv_path, config) != 0:
             return 3
@@ -1362,8 +1386,7 @@ def main(argv: list[str] | None = None) -> int:
         csv_for_part2 = Path(args.csv)
 
     if args.stage in {"part2", "run"}:
-        judge = make_judge(args.judge, "fit_range", config)
-        state = run_part2(csv_for_part2, config, judge=judge, fit_order=args.fit_order)
+        state = run_part2(csv_for_part2, config, fit_order=args.fit_order)
         _report(state, f"part 2 complete <- {csv_for_part2}")
         parameters = state.parameters
         if parameters:

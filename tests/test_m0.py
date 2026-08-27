@@ -7,7 +7,6 @@ import pytest
 
 from polyrmc.pipeline import run_part1
 from polyrmc.tier0.m0 import select_m0
-from polyrmc.tier1.judge import StaticJudge
 
 RNG = np.random.default_rng(11)
 NOISE = 0.002
@@ -138,7 +137,7 @@ def test_an_all_nan_trace_is_refused(time_s):
 
 def test_the_pipeline_records_which_definition_it_used(run_config, tmp_path):
     state, csv_path = run_part1(
-        run_config, judge=StaticJudge(), output_csv=tmp_path / "m.csv"
+        run_config, output_csv=tmp_path / "m.csv"
     )
     assert state.m0 is not None
     assert state.m0.method in {"adaptive_window", "first_point"}

@@ -499,7 +499,6 @@ def _h_fit_drift(ctx: ToolContext, args: dict[str, Any]) -> str:
 def _h_extract_parameters(ctx: ToolContext, args: dict[str, Any]) -> str:
     """Part 2: the virial fit over an emitted CSV."""
     from polyrmc.pipeline import run_part2
-    from polyrmc.tier1.judge import StaticJudge
 
     csv = args.get("processed_csv") or (
         str(ctx.output_csv) if ctx.output_csv else None
@@ -516,7 +515,7 @@ def _h_extract_parameters(ctx: ToolContext, args: dict[str, Any]) -> str:
     if order not in (1, 2):
         raise Rejected(f"REJECTED. fit_order must be 1 or 2; got {order}.")
 
-    part2 = run_part2(csv, ctx.surface.config, judge=StaticJudge(), fit_order=order)
+    part2 = run_part2(csv, ctx.surface.config, fit_order=order)
     # Part 2 builds its own state from the CSV. Only the results are carried
     # back, never the arrays: the current state's trace is Part 1's, and
     # overwriting it would leave the session describing a run it no longer holds.

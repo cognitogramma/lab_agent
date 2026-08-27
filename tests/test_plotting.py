@@ -9,7 +9,6 @@ from polyrmc.io_csv import read_processed_csv
 from polyrmc.pipeline import run_part1
 from polyrmc.plotting import plot_run, plot_session
 from polyrmc.tier0.argen_io import at_full_scale, gain_change_indices
-from polyrmc.tier1.judge import StaticJudge
 
 
 def test_gain_change_indices_finds_a_switch():
@@ -34,7 +33,7 @@ def test_full_scale_samples_are_identified():
 
 def test_plot_run_writes_a_figure(run_config, tmp_path):
     state, csv_path = run_part1(
-        run_config, judge=StaticJudge(), output_csv=tmp_path / "run.csv"
+        run_config, output_csv=tmp_path / "run.csv"
     )
     frame, _metadata = read_processed_csv(csv_path)
 

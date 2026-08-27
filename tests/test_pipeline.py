@@ -1,4 +1,4 @@
-"""End-to-end runs, provenance, and the orchestrator's confirmation gate."""
+"""End-to-end runs and the provenance they leave behind."""
 
 from __future__ import annotations
 
@@ -8,9 +8,7 @@ import pytest
 from polyrmc.config import FitRangeConfig, LoopConfig, RunConfig, SmoothingConfig
 from polyrmc.io_csv import read_processed_csv
 from polyrmc.pipeline import new_run_id, run_part1, run_part2
-from polyrmc.provenance import load_sidecar, replay_decisions, sidecar_path
-from polyrmc.tier1.judge import RecordedJudge, StaticJudge
-from polyrmc.tier2.orchestrator import Orchestrator, PendingRun
+from polyrmc.provenance import load_sidecar, sidecar_path
 
 from conftest import TRUE_A2, TRUE_MW
 
@@ -27,13 +25,12 @@ def virial_config(virial_argen_file, optical, dilution):
         dilution=dilution,
         smoothing=SmoothingConfig(min_window=5, max_window=51, n_candidates=5),
         fit_range=FitRangeConfig(min_points=50, n_candidates=5),
-        loop=LoopConfig(max_iterations=2),
-    )
+        loop=LoopConfig(max_iterations=2))
 
 
 def test_part1_emits_a_csv_and_a_sidecar(run_config, tmp_path):
     output = tmp_path / "out.csv"
-    state, path = run_part1(run_config, judge=StaticJudge(), output_csv=output)
+    state, path = run_part1(run_config, output_csv=output)
 
     assert path.exists()
     assert sidecar_path(path).exists()
@@ -43,7 +40,7 @@ def test_part1_emits_a_csv_and_a_sidecar(run_config, tmp_path):
 
 def test_part1_preserves_the_time_axis_length(run_config, tmp_path):
     state, _path = run_part1(
-        run_config, judge=StaticJudge(), output_csv=tmp_path / "out.csv"
+        run_config, output_csv=tmp_path / "out.csv"
     )
 
     assert state.time_s.size == state.raw_signal.size
@@ -53,7 +50,7 @@ def test_part1_preserves_the_time_axis_length(run_config, tmp_path):
 
 def test_sidecar_records_the_loop_trajectory(run_config, tmp_path):
     output = tmp_path / "out.csv"
-    run_part1(run_config, judge=StaticJudge(), output_csv=output)
+    run_part1(run_config, output_csv=output)
 
     record = load_sidecar(sidecar_path(output))
 
@@ -64,32 +61,22 @@ def test_sidecar_records_the_loop_trajectory(run_config, tmp_path):
 
     loop = record["loops"]["smoothing_window"]
     assert loop["resolved_value"] is not None
-    assert loop["decisions"], "decisions must be recorded for replay"
-    assert loop["candidates_by_iteration"], "the offered set must be recorded too"
-
-
-def test_recorded_decisions_replay_to_the_same_window(run_config, tmp_path):
-    output = tmp_path / "out.csv"
-    first, _path = run_part1(run_config, judge=StaticJudge(), output_csv=output)
-
-    record = load_sidecar(sidecar_path(output))
-    decisions = replay_decisions(record, "smoothing_window")
-
-    second, _path = run_part1(
-        run_config, judge=RecordedJudge(decisions), output_csv=tmp_path / "replay.csv"
-    )
-
-    assert second.loops["smoothing_window"].resolved_value == (
-        first.loops["smoothing_window"].resolved_value
-    )
-    assert second.loops["smoothing_window"].provenance[0].replayed is True
+    # The offered set is the part that has to survive. Which windows passed the
+    # gates is a claim about the data, and a reviewer checks the chosen one
+    # against the others -- so recording only the winner would be recording the
+    # conclusion without the evidence.
+    assert loop["candidates_by_iteration"], "the offered set must be recorded"
+    offered = loop["candidates_by_iteration"][0]
+    assert any(
+        candidate["value"] == loop["resolved_value"] for candidate in offered
+    ), "the chosen window must be one of the candidates that was certified"
 
 
 def test_uncalibrated_run_warns_and_withholds_absolute_values(virial_config, tmp_path):
     _state, csv_path = run_part1(
-        virial_config, judge=StaticJudge(), output_csv=tmp_path / "v.csv"
+        virial_config, output_csv=tmp_path / "v.csv"
     )
-    state = run_part2(csv_path, virial_config, judge=StaticJudge())
+    state = run_part2(csv_path, virial_config)
 
     assert state.parameters.calibrated is False
     assert state.parameters.mw is None
@@ -100,9 +87,9 @@ def test_uncalibrated_run_warns_and_withholds_absolute_values(virial_config, tmp
 def test_end_to_end_recovers_the_known_a2_mw(virial_config, tmp_path):
     """The whole point: a known answer survives the full pipeline uncalibrated."""
     _state, csv_path = run_part1(
-        virial_config, judge=StaticJudge(), output_csv=tmp_path / "v.csv"
+        virial_config, output_csv=tmp_path / "v.csv"
     )
-    state = run_part2(csv_path, virial_config, judge=StaticJudge())
+    state = run_part2(csv_path, virial_config)
 
     assert state.parameters.a2_mw == pytest.approx(TRUE_A2_MW, rel=0.10)
     assert state.fit.n_points >= virial_config.fit_range.min_points
@@ -111,9 +98,9 @@ def test_end_to_end_recovers_the_known_a2_mw(virial_config, tmp_path):
 def test_alpha_calibration_does_not_move_a2_mw(virial_config, tmp_path):
     """Setting alpha must change Mw and A2 but leave their product alone."""
     _state, uncalibrated_csv = run_part1(
-        virial_config, judge=StaticJudge(), output_csv=tmp_path / "uncal.csv"
+        virial_config, output_csv=tmp_path / "uncal.csv"
     )
-    uncalibrated = run_part2(uncalibrated_csv, virial_config, judge=StaticJudge())
+    uncalibrated = run_part2(uncalibrated_csv, virial_config)
 
     calibrated_config = virial_config.model_copy(deep=True)
     # Calibrating means declaring both that the channel is a count rate and what
@@ -121,9 +108,9 @@ def test_alpha_calibration_does_not_move_a2_mw(virial_config, tmp_path):
     calibrated_config.ls_units = "count_rate"
     calibrated_config.optical.alpha = 1.0e9
     _state, calibrated_csv = run_part1(
-        calibrated_config, judge=StaticJudge(), output_csv=tmp_path / "cal.csv"
+        calibrated_config, output_csv=tmp_path / "cal.csv"
     )
-    calibrated = run_part2(calibrated_csv, calibrated_config, judge=StaticJudge())
+    calibrated = run_part2(calibrated_csv, calibrated_config)
 
     assert calibrated.parameters.calibrated is True
     assert calibrated.parameters.a2_mw == pytest.approx(
@@ -140,15 +127,15 @@ def test_part2_refuses_a_single_concentration(run_config, tmp_path):
     has no slope, and therefore no A2.
     """
     fixed = run_config.model_copy(update={"experiment_type": "fixed_conc_aggregation"})
-    _state, csv_path = run_part1(fixed, judge=StaticJudge(), output_csv=tmp_path / "f.csv")
+    _state, csv_path = run_part1(fixed, output_csv=tmp_path / "f.csv")
 
     with pytest.raises(ValueError, match="one concentration"):
-        run_part2(csv_path, fixed, judge=StaticJudge())
+        run_part2(csv_path, fixed)
 
 
 def test_unknown_channel_is_refused(run_config, tmp_path):
     with pytest.raises(ValueError, match="is not a scattering channel"):
-        run_part1(run_config, channel="ls99", judge=StaticJudge())
+        run_part1(run_config, channel="ls99")
 
 
 def test_ls8_is_the_default_channel(run_config, tmp_path):
@@ -156,44 +143,11 @@ def test_ls8_is_the_default_channel(run_config, tmp_path):
     assert run_config.channel == "ls8"
 
     _state, csv_path = run_part1(
-        run_config, judge=StaticJudge(), output_csv=tmp_path / "default.csv"
+        run_config, output_csv=tmp_path / "default.csv"
     )
     _frame, metadata = read_processed_csv(csv_path)
 
     assert metadata["channel"] == "ls8"
-
-
-def test_orchestrator_refuses_to_run_without_a_confirmed_experiment_type(run_config):
-    orchestrator = Orchestrator(template=run_config, judge=StaticJudge())
-    pending = PendingRun(path=run_config.source_file)
-
-    with pytest.raises(RuntimeError, match="no confirmed experiment type"):
-        orchestrator.execute(pending)
-
-
-def test_orchestrator_runs_once_a_human_confirms(run_config, tmp_path):
-    orchestrator = Orchestrator(template=run_config, judge=StaticJudge())
-    orchestrator.pending.append(PendingRun(path=run_config.source_file))
-
-    orchestrator.confirm_all(lambda run: "fixed_conc_aggregation")
-    state = orchestrator.execute(orchestrator.pending[0])
-
-    assert state in orchestrator.completed
-    assert "run" in orchestrator.report(state)
-
-
-def test_orchestrator_discovery_stages_without_executing(run_config, tmp_path):
-    inbox = tmp_path / "inbox"
-    inbox.mkdir()
-    (inbox / "a.txt").write_text("placeholder", encoding="utf-8")
-    (inbox / "b.txt").write_text("placeholder", encoding="utf-8")
-    orchestrator = Orchestrator(template=run_config)
-
-    staged = orchestrator.discover(inbox)
-
-    assert len(staged) == 2
-    assert all(not run.is_confirmed for run in staged)
-    assert orchestrator.completed == []
 
 
 def test_new_run_id_is_unique():

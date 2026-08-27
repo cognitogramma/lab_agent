@@ -65,6 +65,20 @@ def load_lab_context(start: str | Path | None = None) -> tuple[str, Path | None]
     return path.read_text(encoding="utf-8"), path
 
 
+PROMPT_DIR = Path(__file__).parent / "prompts"
+
+
+def load_prompt(name: str) -> str:
+    """Read a prompt from disk.
+
+    Prompts live in files rather than in code on purpose. What the agent is told
+    it may and may not do is the reviewable part of this system, and a
+    researcher who disagrees with the taste encoded there should be able to
+    change it and see the effect without touching Python.
+    """
+    return (PROMPT_DIR / name).read_text(encoding="utf-8")
+
+
 def system_prompt_with_lab(base: str, start: str | Path | None = None) -> str:
     """Compose the system prompt with the lab context appended.
 
@@ -78,8 +92,10 @@ def system_prompt_with_lab(base: str, start: str | Path | None = None) -> str:
 
 __all__ = [
     "MISSING_NOTICE",
+    "PROMPT_DIR",
     "SEARCH_PATHS",
     "find_lab_file",
     "load_lab_context",
+    "load_prompt",
     "system_prompt_with_lab",
 ]

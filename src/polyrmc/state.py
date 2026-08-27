@@ -175,22 +175,6 @@ class Candidate(BaseModel):
     label: str = ""
 
 
-class JudgeDecision(BaseModel):
-    """A judge's response for one loop iteration."""
-
-    iteration: int = Field(..., ge=0)
-    action: Literal["select", "repropose"]
-    selected_index: int | None = None
-    direction_hint: str | None = Field(
-        None, description="Only meaningful when action == 'repropose'."
-    )
-    rationale: str = ""
-    rejected_indices: list[int] = Field(
-        default_factory=list,
-        description="Logged alongside the accepted one. For fit ranges this is "
-        "the scientific claim: which points were excluded from the linear region.",
-    )
-
 
 class AnchorCandidate(BaseModel):
     """One region eligible to be used as baseline.
@@ -255,46 +239,27 @@ class DriftModel(BaseModel):
     reversible: bool = True
 
 
-class JudgeVerdict(BaseModel):
-    """One lane's choice, and the diagnostics that drove it.
-
-    ``cited_diagnostics`` is not decoration. A lane that cannot name which
-    numbers moved it has not reasoned about them, and the citation is what lets
-    a reviewer check the reasoning against the shortlist rather than taking the
-    rationale at its word.
-    """
-
-    lane: Literal["llm", "vlm", "human", "fallback"]
-    window_length: int
-    rationale: str
-    cited_diagnostics: list[str] = Field(default_factory=list)
-    model: str = "unknown"
-
-
-class ModelProvenance(BaseModel):
-    """Pinned identity of the judge that produced a decision."""
-
-    model: str
-    prompt_hash: str = Field(..., description="SHA-256 of the exact rendered prompt.")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    replayed: bool = Field(
-        False, description="True if served from the log rather than the provider."
-    )
 
 
 class LoopState(BaseModel):
-    """Full trajectory of one bounded evaluator loop."""
+    """Every candidate a selection was offered, and which one it took.
+
+    Named for the bounded propose-judge-re-propose loop this used to record.
+    The loop is gone -- the agent selects through the tool surface now -- but
+    the record is not, because the record was never about the iterations. Which
+    candidates passed the gates, and which one was taken, is the scientific
+    claim the sidecar exists to carry.
+    """
 
     name: str
     max_iterations: int
     iterations_used: int = 0
     candidates_by_iteration: list[list[Candidate]] = Field(default_factory=list)
-    decisions: list[JudgeDecision] = Field(default_factory=list)
-    provenance: list[ModelProvenance] = Field(default_factory=list)
 
     resolved_value: Any = None
     used_fallback: bool = Field(
-        False, description="True if the cap was hit and the safe default was taken."
+        False,
+        description="True if no candidate passed the gates and nothing was chosen.",
     )
     fallback_reason: str | None = None
 
@@ -386,17 +351,6 @@ class RunState(BaseModel):
     window_length: int | None = None
     polyorder: int | None = None
 
-    # The two-lane judge. Disagreement between an independent numeric reading
-    # and an independent visual one is information, not a fault: it is the
-    # cheapest available signal that a run is unusual, so it is surfaced rather
-    # than averaged away.
-    judge_status: Literal[
-        "not_run", "human", "both_lanes", "llm_only", "vlm_only", "escalated", "fallback"
-    ] = "not_run"
-    llm_lane: JudgeVerdict | None = None
-    vlm_lane: JudgeVerdict | None = None
-    lanes_disagreed: bool = False
-    fallback_taken: bool = False
 
     execution_history: list[str] = Field(
         default_factory=list,

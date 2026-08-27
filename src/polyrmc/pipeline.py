@@ -44,7 +44,6 @@ from polyrmc.tier0.smoothing import propose_windows, savgol_smooth
 from polyrmc.tier0.splice import apply_splice
 from polyrmc.tier0.virial import build_kc_over_i, derive_parameters, fit_virial
 from polyrmc.tier1.fit_range_selector import select_fit_range
-from polyrmc.tier1.loop import Judge
 from polyrmc.tier1.smoothing_selector import select_smoothing_window
 
 
@@ -526,14 +525,14 @@ def _figure(state: RunState, name: str, draw, *args, **kwargs) -> None:
 def run_part1(
     config: RunConfig,
     channel: str | None = None,
-    judge: Judge | None = None,
     output_csv: str | Path | None = None,
 ) -> tuple[RunState, Path]:
     """Clean one channel and emit the validated CSV plus its provenance sidecar.
 
-    The batch path: prepare, let the tier-1 loop resolve the window, finish.
-    The agent drives the same three stages itself, so both routes run identical
-    measurement code and differ only in who makes the judgment.
+    The batch path: prepare, take the conservative window, finish. The agent
+    drives the same three stages itself and chooses its own window through the
+    tool surface, so both routes run identical measurement code and differ only
+    in who makes the judgment.
     """
     channel = channel or config.channel
     state, suspect = prepare_run(config, channel=channel)
@@ -541,9 +540,6 @@ def run_part1(
     window_loop = select_smoothing_window(
         state.corrected_signal,
         smoothing_config=config.smoothing,
-        loop_config=config.loop,
-        judge=judge,
-        context={"channel": channel, "run_id": config.run_id},
         exclude=suspect,
     )
     state.loops["smoothing_window"] = window_loop
@@ -560,7 +556,6 @@ def run_part1(
 def run_part2(
     processed_csv: str | Path,
     config: RunConfig,
-    judge: Judge | None = None,
     fit_order: int = 1,
 ) -> RunState:
     """Extract A2*Mw, Mw, A3, and k_D from a validated CSV."""
@@ -632,9 +627,6 @@ def run_part2(
         state.concentration,
         state.kc_over_i,
         fit_config=config.fit_range,
-        loop_config=config.loop,
-        judge=judge,
-        context={"run_id": state.run_id, "calibrated": calibrated},
         stride=stride,
     )
     state.loops["fit_range"] = range_loop
