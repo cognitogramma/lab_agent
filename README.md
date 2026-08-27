@@ -60,6 +60,7 @@ drift from its behaviour.
 ```
 polyrmc agent                                    # a session; ask about past work
 polyrmc agent --raw <file> --declarations <f>    # a session over a nominated run
+polyrmc gui                                      # the same session, in a window
 ```
 
 Slash commands: `/state`, `/tools`, `/history`, `/runs [query]`, `/notes
@@ -90,6 +91,81 @@ tool surface writes its rejections as recovery instructions and the band it
 names is the useful part. An **approval prompt** is printed whole, because a
 prompt that hides what is about to change trains you to approve without
 looking.
+
+## The window
+
+```bash
+polyrmc gui
+```
+
+The same session — same orchestrator, same tool surface, same log — with the
+run beside it instead of recalled on demand.
+
+```
++--------------------------------------------------------------------------+
+| state | figures | past runs | notes | tools |                            |
+|                                     |  the 2000 mM Gd run looks noisy     |
+|  run_id        session              |  above 0.6 h -- what window?        |
+|  loaded        no -- call load_run  |                                     |
+|  undeclared    technique,           |  The sweep put nine odd windows     |
+|                instrument, ...      |  inside the safe band. [...]        |
+|  smoothing     not chosen           |                                     |
+|  baseline      none, 0 candidate(s) |   . loading and cleaning the file   |
+|                                     |   . sweeping the smoothing windows  |
+|                                     |  +--------------------------------+ |
+|                                     |  | refused                        | |
+|                                     |  | Window 7 is not in the safe    | |
+|                                     |  | band. Safe band is [21, 25,    | |
+|                                     |  | 31, 37, 45, 51, 55, 61]. [...] | |
+|                                     |  +--------------------------------+ |
++--------------------------------------------------------------------------+
+```
+
+It exists for the figures. This pipeline draws them on every processed run —
+the raw trace with its anomalies marked, the smoothing window against the trace
+it tracked, the excess Rayleigh ratio, the residuals — and a terminal can only
+tell you the path it wrote them to. So the decision those figures exist to
+inform gets taken from a number in a transcript, with the picture of it
+unopened two directories away, which is the decision this whole pipeline exists
+to stop being taken by eye. Every caveat is printed *into* the image by
+`figures.py`, so what you see is the whole claim rather than a thumbnail of it.
+
+Beside that, two smaller things. The run state is permanently on screen,
+rendered from the same `render_state` the model gets from `get_state`, so what
+you are looking at and what the agent is reasoning over are one text. And the
+commit gate is a dialog rather than a line in a stream — a prompt with three
+sensible answers, sitting in the same scroll as everything else, is a prompt
+answered by muscle memory.
+
+**The window adds no route.** There are no stage buttons, no wizard, no
+"Part 1 → Part 2" — because the model still decides what happens next, and a
+window is exactly where a fixed route would creep back in as a row of buttons
+that runs the stages in order. Of the 33 tools, the window invokes exactly two
+on its own, `search_past_runs` and `read_notes`, both `read` tier and neither
+able to change a run. All 8 compute and 9 commit tools are reached only by the
+model choosing to call them, past the approval gate. That is asserted, not
+promised: `test_the_window_offers_no_route_of_its_own` fails the build if a
+panel ever runs anything else.
+
+Nothing else is weakened either. It is one loop: commits go through the same
+`ApprovalPolicy`, refusals arrive whole, the cap holds, and the log under
+`data/logs/` is written by the same narrator, so the file a colleague opens is
+the same file whichever surface produced it. Closing the window on a waiting
+commit **refuses** it — an unanswered prompt must never become an approval
+nobody gave.
+
+Markdown in the model's reply is rendered rather than shown. A model writes
+`###` and `**` whatever you ask of it; a console cannot honour that, but a
+window has no excuse — displaying a formatting instruction instead of obeying it
+is the same mistake as printing call syntax. Tables, links and LaTeX are left
+verbatim, and underscores are never emphasis, because this lab writes
+`c0_g_per_cm3` in ordinary prose and a key italicised through the middle is a
+key nobody can search for.
+
+The window costs no new dependency: Tk ships with CPython, and matplotlib is
+already on the measurement path. On Linux, Tk is sometimes a separate package
+(`python3-tk`); without it, `polyrmc gui` says so and names `polyrmc agent`,
+which does everything the window does apart from showing you the picture.
 
 ## Bring your own tokens
 
@@ -268,6 +344,11 @@ src/polyrmc/
           lanes         the two-lane numeric/visual judge
           lab           LAB.md, loaded whole into every session
 
+  gui/    app         the window: panels, the event pump, the menus
+          session     the turn thread, and the approval handshake across it
+          widgets     transcript, state panel, figure viewer, the commit dialog
+          theme       one palette; four things that must not be skimmed
+
   memory/ registry    index over past runs' provenance sidecars
           notes       what the agent concluded, kept between sessions
 ```
@@ -307,6 +388,7 @@ own synthetic acquisitions.
 
 ```bash
 .venv\Scripts\python.exe -m polyrmc.cli agent
+.venv\Scripts\python.exe -m polyrmc.cli gui
 .venv\Scripts\python.exe -m polyrmc.cli run --config examples/run_config.example.json
 .venv\Scripts\python.exe -m polyrmc.cli plot --file <any data file>
 ```
