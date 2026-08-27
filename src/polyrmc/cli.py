@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal as _signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -847,6 +848,69 @@ def _tail_log(log, argument: str = "") -> str:
     return f"session log: {log.location}\n\n{body}"
 
 
+class Interruptible:
+    """Ctrl+C ends the turn, not the process.
+
+    The terminal had no way to interrupt a running turn. Ctrl+C raised straight
+    out through the generator, which lost the spend figure, lost the pointer to
+    the session log, and left the conversation holding an assistant turn whose
+    tool calls had no results -- so a session that survived it could not have
+    asked anything else anyway.
+
+    Now it sets the same cooperative flag the window's Stop button sets, and the
+    turn ends at its next boundary. It has to be cooperative for the same reason
+    there: a model call is a blocking request inside a vendor SDK and a tool is
+    numpy over eighty thousand points, and neither can be cut off without
+    leaving the run in a state nobody can describe.
+
+    The second Ctrl+C is the escape hatch. If the researcher has already asked
+    once and nothing has come back, the provider is hung and they are entitled
+    to their terminal back.
+
+    Used as a context manager so the handler is only installed for the duration
+    of a turn: at the prompt, Ctrl+C should end the session as it always did.
+    """
+
+    NOTICE = (
+        "\n  stopping -- waiting for the model call or tool already running to "
+        "return.\n  Ctrl+C again to give up on it."
+    )
+
+    def __init__(self, on_notice=print) -> None:
+        self.requested = False
+        self._previous = None
+        self._on_notice = on_notice
+
+    def __call__(self) -> bool:
+        """The poll the orchestrator holds."""
+        return self.requested
+
+    def _handle(self, signum, frame):
+        if self.requested:
+            self._restore()
+            raise KeyboardInterrupt
+        self.requested = True
+        self._on_notice(self.NOTICE)
+
+    def _restore(self) -> None:
+        if self._previous is not None:
+            _signal.signal(_signal.SIGINT, self._previous)
+            self._previous = None
+
+    def __enter__(self) -> "Interruptible":
+        self.requested = False
+        try:
+            self._previous = _signal.signal(_signal.SIGINT, self._handle)
+        except ValueError:
+            # Not the main thread, so there is no signal to take. The turn runs
+            # to completion, which is what happened before any of this existed.
+            self._previous = None
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._restore()
+
+
 def run_agent(args) -> int:
     """The agent session: the model drives, and commits go through you.
 
@@ -925,6 +989,8 @@ def run_agent(args) -> int:
         rates=rates_from_env(),
     )
 
+    interrupts = Interruptible()
+
     print(f"\n{GREETING}")
     if provider is not None:
         agent = Orchestrator(
@@ -934,6 +1000,7 @@ def run_agent(args) -> int:
             registry=registry,
             max_steps=args.max_steps,
             budget=budget,
+            should_stop=interrupts,
         )
         print(f"model: {provider.name} / {provider.model}   tools: {registry_size}")
         print(
@@ -1082,7 +1149,10 @@ def run_agent(args) -> int:
 
         narrator.user(line)
         try:
-            outcome = report(agent.stream(line))
+            with interrupts:
+                outcome = report(agent.stream(line))
+            if interrupts.requested:
+                log.write("session", "stopped by Ctrl+C")
         except Exception as error:  # a bug here must not cost the transcript
             log.write("session error", f"{type(error).__name__}: {error}")
             print(

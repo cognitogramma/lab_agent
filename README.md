@@ -67,6 +67,11 @@ Slash commands: `/state`, `/tools`, `/history`, `/runs [query]`, `/notes
 [query]`, `/always <tool>`, `/auto`, `/cost`, `/providers`, `/log [n]`, `/help`,
 `/exit`.
 
+**Ctrl+C ends the turn, not the process.** It asks the run to stop at its next
+boundary and reports where that left it, the same way the step cap does. Press
+it again and you get your terminal back, for when a provider has hung and there
+is no next boundary coming.
+
 **What it prints is an account, not a trace.** The session shows what the model
 said and one plain line per action:
 
@@ -129,6 +134,23 @@ inform gets taken from a number in a transcript, with the picture of it
 unopened two directories away, which is the decision this whole pipeline exists
 to stop being taken by eye. Every caveat is printed *into* the image by
 `figures.py`, so what you see is the whole claim rather than a thumbnail of it.
+
+**You can stop it.** The Ask button becomes Stop while a turn is running, and
+Escape does the same thing. It is a cooperative stop, and it says so: a model
+call is a blocking request inside a vendor SDK and a tool is numpy over eighty
+thousand points, so neither can be cut off without leaving the run in a state
+nobody can describe. The button therefore reads *stopping*, not *stopped*, until
+the thing already in flight returns — usually a second or two, occasionally the
+length of one model call. A button that claimed otherwise would have people
+pulling the plug when the window "ignored" them.
+
+What a stop costs is the rest of the turn, never the run and never the
+conversation. Tools behind the stop are answered rather than dropped — a
+provider handed an assistant turn that asked for three tools needs three
+results back or the next request is malformed — so the model is told which
+calls did not run and why. Anything that had already completed stands. A stop
+leaves the run exactly where the step cap would: wherever the last completed
+tool left it.
 
 Beside that, two smaller things. The run state is permanently on screen,
 rendered from the same `render_state` the model gets from `get_state`, so what

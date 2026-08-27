@@ -596,3 +596,193 @@ def test_extracting_parameters_recovers_the_known_answer(
         f"A2*Mw came back {recovered:.6g} against a known {expected:.6g}"
     )
     assert "withheld" in rendered, "an uncalibrated run must not report Mw"
+
+
+# --- stopping ----------------------------------------------------------------
+#
+# A stop is cooperative and it has to be: a model call is a blocking request
+# inside a vendor SDK and a tool is numpy over eighty thousand points, so the
+# only safe places to end a turn are the boundaries between them.
+
+
+def stopper(after_calls: int = 0):
+    """A poll that goes true once a tripwire tool has run."""
+    box = {"stop": after_calls == 0}
+    return box, (lambda: box["stop"])
+
+
+def test_a_stop_before_the_first_call_spends_nothing(context):
+    """Asked to stop before it started, it does not call the model at all."""
+    box, poll = stopper()
+    provider = ScriptedProvider([AssistantTurn(text="never reached")])
+    agent = Orchestrator(
+        context=context, provider=provider, approvals=ApprovalPolicy(ask=allow_all),
+        should_stop=poll,
+    )
+
+    events = agent.ask("go")
+    assert [e.kind for e in events] == ["stopped", "spend"]
+    assert provider.calls == [], "a stopped turn must not spend a request"
+    assert agent.budget.spent.requests == 0
+
+
+def test_a_stop_skips_the_rest_of_the_batch_but_answers_every_call(context):
+    """The load-bearing one.
+
+    A provider is handed an assistant turn that asked for three tools, and every
+    one of them has to come back with a result or the next request is malformed
+    and refused. So a stop costs the remaining calls -- and never the
+    conversation, which is the thing the researcher would actually miss.
+    """
+    box = {"stop": False}
+
+    def tripwire(ctx, args):
+        box["stop"] = True
+        return "the researcher hit stop while this was running"
+
+    trip = Tool("tripwire", "read", "Test hook.", {"type": "object", "properties": {}}, tripwire)
+    agent = Orchestrator(
+        context=context,
+        provider=ScriptedProvider(
+            [
+                AssistantTurn(
+                    tool_calls=[
+                        ToolCall("a", "tripwire", {}),
+                        ToolCall("b", "get_state", {}),
+                        ToolCall("c", "list_anomalies", {}),
+                    ]
+                ),
+                AssistantTurn(text="never reached"),
+            ]
+        ),
+        approvals=ApprovalPolicy(ask=allow_all),
+        registry=build_registry(extra=[trip]),
+        should_stop=lambda: box["stop"],
+    )
+
+    events = agent.ask("go")
+    assert events[-2].kind == "stopped"
+
+    # Only the tripwire ran; the two behind it were skipped, not executed.
+    assert [c.name for c, r in agent.trace] == ["tripwire"]
+
+    tool_message = agent.messages[-1]
+    assert tool_message.role == "tool"
+    assert len(tool_message.results) == 3, (
+        "every tool call the model made must come back with a result, or the "
+        "next request is malformed"
+    )
+    assert [r.call_id for r in tool_message.results] == ["a", "b", "c"]
+    skipped = [r for r in tool_message.results if not r.ok]
+    assert len(skipped) == 2
+    assert "stopped the session" in skipped[0].content
+    assert "Do not retry it" in skipped[0].content
+
+
+def test_a_stop_between_rounds_ends_before_the_next_model_call(context):
+    box = {"stop": False}
+
+    def tripwire(ctx, args):
+        box["stop"] = True
+        return "ok"
+
+    trip = Tool("tripwire", "read", "Test hook.", {"type": "object", "properties": {}}, tripwire)
+    provider = ScriptedProvider(
+        [
+            AssistantTurn(tool_calls=[ToolCall("a", "tripwire", {})]),
+            AssistantTurn(text="this second round must never happen"),
+        ]
+    )
+    agent = Orchestrator(
+        context=context, provider=provider, approvals=ApprovalPolicy(ask=allow_all),
+        registry=build_registry(extra=[trip]), should_stop=lambda: box["stop"],
+    )
+
+    events = agent.ask("go")
+    assert [c.name for c, r in agent.trace] == ["tripwire"]
+    assert len(provider.calls) == 1, "the round after the stop was still requested"
+    assert any(e.kind == "stopped" for e in events)
+    # A stop is the researcher's decision, not a failure of the session.
+    assert not any(e.kind in {"failed", "capped"} for e in events)
+
+
+def test_the_run_keeps_whatever_finished_before_the_stop(context, tmp_path):
+    """A stop is not a rollback. What ran, ran, and the state says so."""
+    box = {"stop": False}
+
+    def tripwire(ctx, args):
+        box["stop"] = True
+        return "ok"
+
+    trip = Tool("tripwire", "read", "Test hook.", {"type": "object", "properties": {}}, tripwire)
+    agent = Orchestrator(
+        context=context,
+        provider=ScriptedProvider(
+            [
+                AssistantTurn(
+                    tool_calls=[
+                        ToolCall("a", "set_declaration", {"key": "c0_g_per_cm3", "value": 0.004}),
+                        ToolCall("b", "tripwire", {}),
+                        ToolCall("c", "set_declaration", {"key": "ls_units", "value": "count_rate"}),
+                    ]
+                ),
+                AssistantTurn(text="never reached"),
+            ]
+        ),
+        approvals=ApprovalPolicy(ask=allow_all),
+        registry=build_registry(extra=[trip]),
+        should_stop=lambda: box["stop"],
+    )
+    agent.ask("go")
+
+    declared = context.surface.state.declarations
+    assert "c0_g_per_cm3" in declared, "a commit that completed before the stop stands"
+    assert "ls_units" not in declared, "a commit behind the stop never ran"
+
+
+def test_ctrl_c_ends_the_turn_and_the_second_one_ends_the_wait():
+    """The terminal's stop, which is the same flag the window's button sets.
+
+    Ctrl+C used to raise straight out through the generator: no spend figure, no
+    pointer to the log, and a conversation left holding an assistant turn whose
+    tool calls had no results. Now the first one asks the turn to end and the
+    second one is the escape hatch, for when the provider is hung and the
+    researcher wants their terminal back.
+    """
+    from polyrmc.cli import Interruptible
+
+    seen = []
+    interrupts = Interruptible(on_notice=seen.append)
+
+    with interrupts:
+        assert interrupts() is False
+        interrupts._handle(2, None)
+        assert interrupts() is True, "the orchestrator polls this to end the turn"
+        assert seen and "stopping" in seen[0]
+        assert "again to give up" in seen[0], "the way out has to be on screen"
+
+        with pytest.raises(KeyboardInterrupt):
+            interrupts._handle(2, None)
+
+    # Re-entering clears it: a stop ends one question, not the session.
+    with interrupts:
+        assert interrupts() is False
+
+
+def test_an_interruptible_turn_off_the_main_thread_is_not_an_error():
+    """Signals only exist on the main thread; a worker just runs to completion."""
+    import threading
+
+    from polyrmc.cli import Interruptible
+
+    outcome = []
+
+    def worker():
+        interrupts = Interruptible(on_notice=lambda _m: None)
+        with interrupts:
+            outcome.append(interrupts())
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(10)
+    assert outcome == [False]

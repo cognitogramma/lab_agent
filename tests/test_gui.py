@@ -138,17 +138,24 @@ def test_a_turn_that_raises_reports_a_crash_and_still_finishes(context):
 
 
 class Stalling:
-    """A provider that answers only when the test lets it."""
+    """A provider that answers only when the test lets it.
+
+    ``reply`` decides whether the turn it eventually gives back is a final
+    answer or a request for tools -- which matters for stopping. A turn that
+    answers is finished, and there is nothing left to cancel; only a turn that
+    wants another round has a next step to be stopped before.
+    """
 
     name = "stalling"
     model = "stalling"
 
-    def __init__(self, gate: threading.Event) -> None:
+    def __init__(self, gate: threading.Event, reply: AssistantTurn | None = None) -> None:
         self.gate = gate
+        self.reply = reply or AssistantTurn(text="answered at last.")
 
     def converse(self, system, messages, tools):
         assert self.gate.wait(TIMEOUT), "the test never released the provider"
-        return AssistantTurn(text="answered at last.")
+        return self.reply
 
 
 def test_one_turn_at_a_time(context):
@@ -499,6 +506,115 @@ def test_standing_approval_only_covers_commit_tools(window):
     assert "get_state" not in window.policy.always
     window.always_allow("pick_window")
     assert "pick_window" in window.policy.always
+
+
+# --- stopping ----------------------------------------------------------------
+
+
+def test_stopping_an_idle_bridge_does_nothing(context):
+    """Escape is a reflex, and it must be free to press when nothing is running."""
+    bridge = Bridge(agent=None, surface=context.surface)
+    bridge.request_stop()
+    assert bridge.stopping is False
+    assert bridge.should_stop() is False
+
+
+def test_a_stop_ends_the_turn_and_the_next_question_starts_clean(context):
+    gate = threading.Event()
+    agent = Orchestrator(
+        context=context, provider=Stalling(gate),
+        approvals=ApprovalPolicy(ask=allow_all), registry=build_registry(),
+    )
+    bridge = Bridge(agent=agent, surface=context.surface)
+    agent.should_stop = bridge.should_stop
+
+    bridge.submit("first")
+    bridge.request_stop()
+    assert bridge.stopping is True
+    gate.set()  # the model call already in flight still has to return
+    collect(bridge)
+
+    # The flag belongs to the question, not the session: a stop ends one turn.
+    gate.clear()
+    assert bridge.submit("second") is True
+    assert bridge.stopping is False
+    gate.set()
+    collect(bridge)
+
+
+def test_stopping_releases_a_commit_that_was_waiting_on_an_answer(context):
+    """Someone who hit stop is not answering yes to the dialog behind it."""
+    bridge = gated(context, "understood.")
+
+    bridge.submit("record c0")
+    request = wait_for(bridge, "ask").payload
+    bridge.request_stop()
+
+    assert request.answered
+    verdict = request.await_reply()
+    assert verdict.allowed is False
+    assert "stopped" in verdict.reason
+    collect(bridge)
+    assert "c0_g_per_cm3" not in context.surface.state.declarations
+
+
+def test_the_orchestrator_is_told_where_to_ask(window):
+    """Wired, or the button sets a flag nothing ever reads."""
+    assert window.bridge.should_stop() is False
+    if window.agent is not None:
+        assert window.agent.should_stop == window.bridge.should_stop
+
+
+def test_the_button_is_always_the_thing_you_can_do_now(window):
+    window._busy(True)
+    assert window.ask_button.cget("text") == "Stop"
+    assert str(window.ask_button.cget("state")) == "normal", (
+        "the stop button is the one control that must stay live while busy"
+    )
+    assert str(window.entry.cget("state")) == "disabled"
+
+    window._busy(False)
+    assert window.ask_button.cget("text") == "Ask"
+    assert str(window.entry.cget("state")) == "normal"
+
+
+def test_the_window_says_stopping_not_stopped(window, context):
+    """It has not stopped yet, and claiming otherwise makes people pull the plug.
+
+    Driven against a provider that will not answer until the test lets it, which
+    is the situation the button exists for: a turn is in flight, the researcher
+    has seen enough, and the model call still has to come back before anything
+    can end.
+    """
+    gate = threading.Event()
+    agent = Orchestrator(
+        context=context, provider=Stalling(gate, call("get_state")),
+        approvals=ApprovalPolicy(ask=allow_all), registry=build_registry(),
+    )
+    original = window.bridge
+    window.bridge = Bridge(agent=agent, surface=context.surface)
+    agent.should_stop = window.bridge.should_stop
+    try:
+        window.bridge.submit("something slow")
+        window._busy(True)
+        window.stop()
+
+        assert window.bridge.stopping is True
+        assert window.ask_button.cget("text") == "stopping...", (
+            "the label must not claim the turn has already ended"
+        )
+        shown = window.transcript.plain()
+        assert "stopping" in shown and "already running to return" in shown
+
+        gate.set()  # the in-flight call returns, and only then does the turn end
+        signals = collect(window.bridge)
+        assert any(
+            s.kind == "event" and s.payload.kind == "stopped" for s in signals
+        ), "the turn has to report that it stopped"
+    finally:
+        gate.set()
+        window.bridge = original
+        window._busy(False)
 
 
 GUI_PACKAGE = Path(__file__).resolve().parents[1] / "src" / "polyrmc" / "gui"

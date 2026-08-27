@@ -115,6 +115,7 @@ class Bridge:
         self._thread: threading.Thread | None = None
         self._pending: ApprovalRequest | None = None
         self._closing = threading.Event()
+        self._stopping = threading.Event()
 
     # --- the window's side ----------------------------------------------
 
@@ -122,10 +123,42 @@ class Bridge:
     def busy(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def request_stop(self) -> None:
+        """Ask the running turn to end at its next boundary.
+
+        A poll, not a kill. The turn is somewhere inside a blocking HTTP request
+        or a numpy pass over eighty thousand points, and neither can be
+        interrupted without leaving the run in a state nobody can describe. So
+        this asks, and the orchestrator answers at the next model call or tool
+        -- which is why the window says "stopping" rather than "stopped".
+
+        A commit waiting on approval is released as a refusal. Someone who hit
+        stop is not answering yes to the dialog behind it.
+        """
+        if not self.busy:
+            return
+        self._stopping.set()
+        pending = self._pending
+        if pending is not None:
+            from polyrmc.agent.orchestrator import Approval
+
+            pending.reply(Approval(False, "you stopped the session"))
+
+    @property
+    def stopping(self) -> bool:
+        return self._stopping.is_set()
+
+    def should_stop(self) -> bool:
+        """The poll the orchestrator holds. Read from the turn thread."""
+        return self._stopping.is_set() or self._closing.is_set()
+
     def submit(self, text: str) -> bool:
         """Start a turn. False if one is already running, or there is no model."""
         if self.agent is None or self.busy or self._closing.is_set():
             return False
+        # Cleared per turn, not per session: a stop ends one question, and the
+        # next one starts with nobody asking for it to end.
+        self._stopping.clear()
         self._thread = threading.Thread(
             target=self._run, args=(text,), name="polyrmc-turn", daemon=True
         )

@@ -102,6 +102,10 @@ class Workbench(tk.Tk):
         self._log_warnings()
 
         self.protocol("WM_DELETE_WINDOW", self.close)
+        # Escape is the reflex when something is running away with itself, and
+        # it costs nothing when nothing is: `stop` returns immediately if the
+        # bridge is idle.
+        self.bind("<Escape>", lambda _e: self.stop())
         self._pump_id = self.after(POLL_MS, self._pump)
         self.after(60, self._start_session)
 
@@ -340,6 +344,8 @@ class Workbench(tk.Tk):
         # blocked on an event no one is left to set.
         self.bridge.close()
         self.bridge = Bridge(agent=self.agent, surface=self.session.surface)
+        if self.agent is not None:
+            self.agent.should_stop = self.bridge.should_stop
         if not self.args.auto_approve:
             self.policy.ask = self.bridge.ask
         self._refresh_header()
@@ -429,6 +435,8 @@ class Workbench(tk.Tk):
                 failure.remedy if failure else "",
                 self.log.location,
             )
+        elif kind == "stopped":
+            self.transcript.block("you stopped this", event.text, "declined")
         elif kind == "capped":
             self.transcript.banner(
                 "stopped without answering",
@@ -514,19 +522,50 @@ class Workbench(tk.Tk):
             self._busy(False)
 
     def _busy(self, working: bool) -> None:
-        self.ask_button.configure(
-            text="working..." if working else "Ask",
-            state="disabled" if working or self.dead else "normal",
-        )
-        self.entry.configure(state="disabled" if working else "normal")
+        """One button, two jobs.
+
+        A separate greyed-out Stop beside a greyed-out Ask is two dead controls
+        for the whole time nothing is running, and the live one is whichever is
+        not currently useful. The button is always the thing you can do now.
+        """
         if working:
+            self.ask_button.configure(
+                text="Stop", style="Commit.TButton", command=self.stop, state="normal"
+            )
+            self.entry.configure(state="disabled")
             self.progress.pack(side="right", padx=(0, 14))
             self.progress.start(14)
         else:
+            self.ask_button.configure(
+                text="Ask", style="Accent.TButton", command=self.submit,
+                state="disabled" if self.dead else "normal",
+            )
+            self.entry.configure(state="normal")
             self.progress.stop()
             self.progress.pack_forget()
             if not self.dead:
                 self.entry.focus_set()
+
+    def stop(self) -> None:
+        """Ask the running turn to end, and say honestly that it has not yet.
+
+        The label goes to "stopping", not "stopped". A model call is a blocking
+        request inside a vendor SDK and a tool is numpy over eighty thousand
+        points; neither can be cut off without leaving the run in a state nobody
+        can describe. So the stop lands at the next boundary, which is usually a
+        second or two and occasionally the length of one model call -- and a
+        button that claimed otherwise would have people pulling the plug when
+        the window "ignored" them.
+        """
+        if not self.bridge.busy:
+            return
+        self.bridge.request_stop()
+        self.ask_button.configure(text="stopping...", state="disabled")
+        self.transcript.note(
+            "stopping -- waiting for the model call or tool already running to "
+            "return. Nothing further will be started."
+        )
+        self.log.write("session", "stop requested by the researcher")
 
     # --- slash commands ---------------------------------------------------
 

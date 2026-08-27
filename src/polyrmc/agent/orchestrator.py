@@ -79,6 +79,30 @@ class Approval:
 
 AskFn = Callable[[Tool, ToolCall], Approval]
 
+StopFn = Callable[[], bool]
+"""Asked before each model call and each tool, and answered by whoever is driving.
+
+A poll rather than an interrupt, because there is no safe way to interrupt the
+other two. A model call is a blocking HTTP request inside somebody else's SDK,
+and a tool is numpy running over eighty thousand points; killing either mid-flight
+leaves the run in a state no one can describe. So a stop lands at the next
+boundary, and the answer to "what happened to my run" stays the same as it is
+after the step cap: it is wherever the last completed tool left it.
+"""
+
+NOT_RUN = (
+    "the researcher stopped the session before this call ran. It was not "
+    "executed, and nothing it would have changed was changed. Do not retry it "
+    "on your own -- ask them what they want to do next."
+)
+"""Returned for calls skipped by a stop.
+
+They are answered rather than dropped. A provider is handed the assistant turn
+that asked for three tools, and every one of them must come back with a result
+or the next request is malformed and refused -- so stopping in the middle of a
+batch would cost the researcher the conversation as well as the turn.
+"""
+
 
 def deny_all(tool: Tool, call: ToolCall) -> Approval:
     """Refuse every commit. The default when nobody is at the terminal.
@@ -124,7 +148,8 @@ class ApprovalPolicy:
 
 
 EventKind = Literal[
-    "text", "call", "result", "refused", "denied", "error", "capped", "spend", "failed"
+    "text", "call", "result", "refused", "denied", "error", "capped", "spend",
+    "failed", "stopped",
 ]
 
 
@@ -168,7 +193,7 @@ class Event:
             return _indent(f"declined: {self.text}")
         if self.kind == "error":
             return _indent(f"tool error: {self.text}")
-        if self.kind in {"capped", "spend", "failed"}:
+        if self.kind in {"capped", "spend", "failed", "stopped"}:
             return f"\n[{self.text}]"
         return self.text
 
@@ -194,12 +219,14 @@ class Orchestrator:
         system_prompt: str | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         budget: Budget | None = None,
+        should_stop: StopFn | None = None,
     ) -> None:
         self.context = context
         self.provider = provider
         self.approvals = approvals or ApprovalPolicy()
         self.registry = registry or build_registry()
         self.max_steps = max_steps
+        self.should_stop: StopFn = should_stop or (lambda: False)
         # The session runs on the researcher's own key. What it spent is part of
         # what it did, so it is tracked alongside the tool trace rather than
         # left to whatever the provider's dashboard says tomorrow.
@@ -240,6 +267,10 @@ class Orchestrator:
         turn_usage = Usage()
 
         for step in range(self.max_steps):
+            if self.should_stop():
+                yield from self._stop(turn_usage)
+                return
+
             try:
                 self.budget.check()
             except BudgetExceeded as error:
@@ -273,6 +304,12 @@ class Orchestrator:
 
             results: list[ToolResult] = []
             for call in turn.tool_calls:
+                if self.should_stop():
+                    # Answered, not dropped. See NOT_RUN: an unanswered tool call
+                    # makes the whole conversation unusable, so a stop costs the
+                    # remaining calls and never the transcript.
+                    results.append(ToolResult(call.id, call.name, NOT_RUN, ok=False))
+                    continue
                 yield Event("call", tool=call.name, call=call)
                 result, event = self._invoke(call)
                 results.append(result)
@@ -281,11 +318,30 @@ class Orchestrator:
 
             self.messages.append(Message(role="tool", results=results))
 
+            if self.should_stop():
+                yield from self._stop(turn_usage)
+                return
+
         yield Event(
             "capped",
             f"stopped after {self.max_steps} tool rounds without a final answer. "
             "The run is wherever the last committed tool left it -- ask for "
             "get_state to see where.",
+        )
+        yield Event("spend", _spend_line(turn_usage, self.budget))
+
+    def _stop(self, turn_usage: Usage):
+        """End the turn because a person asked, and say where that leaves the run.
+
+        Deliberately not an error. A researcher who stops a run has made a
+        decision about it, and reporting their decision in the same shape as a
+        dead provider would teach them to read past the one that matters.
+        """
+        yield Event(
+            "stopped",
+            "stopped at your request. Nothing half-finished was committed -- a "
+            "tool either ran or it did not, and the run is wherever the last "
+            "completed one left it. Ask for get_state to see where.",
         )
         yield Event("spend", _spend_line(turn_usage, self.budget))
 
@@ -425,6 +481,7 @@ __all__ = [
     "Event",
     "EventKind",
     "Orchestrator",
+    "StopFn",
     "Usage",
     "allow_all",
     "default_system_prompt",
