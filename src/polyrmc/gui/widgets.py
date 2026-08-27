@@ -960,10 +960,16 @@ class SignInDialog(tk.Toplevel):
 class OpenRunDialog(tk.Toplevel):
     """Point the session at a run.
 
-    Both files or neither. A run is analysed under what a person declared it to
-    be, and a raw file without its declarations would be analysed under a
-    physical model nobody chose -- dn/dc alone is 0.185 for a protein and 0.150
-    for a polysaccharide. The CLI refuses the half-specified case; so does this.
+    The declarations file is optional, and usually absent. A run opens
+    undeclared: the trace loads, the anomalies are found, the smoothing band is
+    computed and the figures draw, because none of that needs to know what the
+    sample is. What does need to know -- the concentration axis, K, Mw -- is
+    blocked with the reason on the record until somebody answers, and you answer
+    by telling the agent, which records it against your name.
+
+    Supplying one is still the fastest route for a run that has already been
+    through intake. What is refused is a declarations file with no raw file to
+    apply it to, which describes nothing.
     """
 
     def __init__(self, parent, fonts: Fonts, author: str) -> None:
@@ -983,16 +989,19 @@ class OpenRunDialog(tk.Toplevel):
         ).pack(fill="x")
         tk.Label(
             wrap,
-            text="The declarations file is what `polyrmc intake` wrote. Both are\n"
-                 "required: a raw file on its own would be processed under a\n"
-                 "physical model nobody chose.",
+            text="A raw file is all you need. It opens undeclared, and anything\n"
+                 "that depends on an unanswered question is blocked with the\n"
+                 "reason shown, never guessed. Tell the agent what the run is and\n"
+                 "it records each answer against your name.\n\n"
+                 "The declarations file is optional: it is what `polyrmc intake`\n"
+                 "wrote, if this run has already been through it.",
             font=fonts.small, background=p.panel, foreground=p.quiet,
             anchor="w", justify="left",
         ).pack(fill="x", pady=(4, 12))
 
         self.raw = self._picker(wrap, fonts, "raw instrument file", (("data files", "*.*"),))
         self.declarations = self._picker(
-            wrap, fonts, "declarations (JSON)", (("JSON", "*.json"), ("all", "*.*"))
+            wrap, fonts, "declarations (optional)", (("JSON", "*.json"), ("all", "*.*"))
         )
 
         fields = tk.Frame(wrap, background=p.panel)
@@ -1045,10 +1054,10 @@ class OpenRunDialog(tk.Toplevel):
     def _accept(self) -> None:
         raw = self.raw.get().strip()
         declarations = self.declarations.get().strip()
-        if bool(raw) != bool(declarations):
+        if declarations and not raw:
             self.warning.configure(
-                text="--raw and --declarations go together. Run `polyrmc intake` "
-                     "first if you have no declarations file."
+                text="A declarations file describes a run, so it needs the run. "
+                     "Choose a raw file as well."
             )
             return
         if not raw:

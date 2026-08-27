@@ -59,9 +59,51 @@ drift from its behaviour.
 
 ```
 polyrmc agent                                    # a session; ask about past work
-polyrmc agent --raw <file> --declarations <f>    # a session over a nominated run
-polyrmc gui                                      # the same session, in a window
+polyrmc agent --raw <file>                       # a session over a nominated run
+polyrmc gui --raw <file>                         # the same session, in a window
 ```
+
+## Opening a run, and what you have to declare
+
+**A raw file is enough.** There is no declarations file to prepare and no
+interview to sit through first. The run opens undeclared, and undeclared is a
+state the pipeline holds rather than a failure it reports:
+
+| you have declared | you can get |
+|---|---|
+| *nothing* | the trace loaded and cleaned, anomalies found and decided, the safe smoothing band, a chosen window, the figures, and an emitted CSV |
+| `experiment_type`, `c0` (and `Q`, `V` on a dilution) | a concentration axis, and therefore **A₂·Mw** and **k_D** |
+| `sample_class` (which sets `dn_dc`) | **Mw**, **A₂** and **A₃** separately |
+| the toluene reference (sets α) | the absolute Rayleigh ratio |
+
+Each row buys the row below it. Nothing is guessed to fill a gap, and nothing
+stalls waiting for an answer it does not need: `concentration_column` and its
+neighbours have always had an explicit branch for the unanswered case, which
+costs that column and records the reason. Ask for a number that is out of reach
+and you get the reason, not a stack trace:
+
+```
+no concentration axis in this file. The virial expansion is fitted against
+concentration, so it needs a run whose concentration is known -- see the
+OPEN-1 path recorded in the sidecar for why this column is blocked.
+```
+
+You answer by telling the agent, in the session, whenever you happen to know.
+`set_declaration` is a commit, so it stops and asks you, and what it records
+carries your name and the time.
+
+Two things this deliberately does **not** do. It does not infer a declaration
+from the shape of the trace — a rising channel is suggestive of aggregation and
+never conclusive, because a dilution whose sample aggregates faster than it
+dilutes rises too. And it does not fall back on a default: `dn_dc` is 0.185 for
+a protein and 0.150 for a polysaccharide, which is a factor of 1.52 in K and a
+third in Mw, and the two traces look identical. An invented constant produces a
+number that is wrong and completely plausible, which is the one failure this
+pipeline exists to prevent.
+
+`polyrmc intake` still exists and still writes a declarations file. It is now a
+convenience — answer everything up front, once, for a run you already
+understand — rather than a gate you have to pass to begin.
 
 Slash commands: `/state`, `/tools`, `/history`, `/runs [query]`, `/notes
 [query]`, `/always <tool>`, `/auto`, `/cost`, `/providers`, `/log [n]`, `/help`,

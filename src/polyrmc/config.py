@@ -45,7 +45,15 @@ class OpticalConfig(_Validated):
     wavelength_nm: float = Field(660.0, gt=0, description="Vacuum wavelength lambda_0.")
     angle_deg: float = Field(90.0, gt=0, lt=180, description="Detection angle theta.")
     solvent_refractive_index: float = Field(1.333, gt=0, description="n_0.")
-    dn_dc: float = Field(..., description="Refractive index increment, cm^3/g.")
+    # None means the question is still open, exactly as it does for ls_units and
+    # toluene_ref below. It blocks K -- and so Mw, A2 and A3 -- rather than
+    # stalling the run, because loading a trace, finding its anomalies and
+    # choosing a smoothing window need no optics at all. The alternative was
+    # requiring an answer before the file could be opened, which is how a
+    # researcher ends up typing a plausible number to get past a dialog.
+    dn_dc: float | None = Field(
+        None, description="Refractive index increment, cm^3/g. None blocks K."
+    )
 
     # Absolute scale factor: I_meas = alpha * I_R. None until the toluene
     # reference is measured on this instrument. A2*Mw and Mw/M0 do not need it.
@@ -219,13 +227,18 @@ class RunConfig(_Validated):
     # number wrong in a way that looks entirely normal. The two spellings are
     # the design's, so a config, a declaration, and a fingerprint hard filter
     # all key on the same strings.
-    experiment_type: Literal["acd_dilution", "fixed_conc_aggregation"]
+    #
+    # None is "not yet declared", not "either". concentration_column already has
+    # an explicit branch for it that costs the column and records why, so an
+    # undeclared run loads and is inspectable and simply cannot produce a
+    # concentration axis until somebody says which experiment this was.
+    experiment_type: Literal["acd_dilution", "fixed_conc_aggregation"] | None = None
 
     # The instrument writes ls1..ls16; only ls8 is the measurement. The others
     # are dropped at load and never reach any analysis stage.
     channel: str = Field("ls8", description="Scattering channel to analyse.")
 
-    optical: OpticalConfig
+    optical: OpticalConfig = Field(default_factory=OpticalConfig)
     dilution: DilutionConfig | None = None
 
     # A fixed-concentration run has a c0 but no dilution geometry, so it needs

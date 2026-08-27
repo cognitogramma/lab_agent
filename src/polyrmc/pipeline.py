@@ -614,7 +614,32 @@ def run_part2(
             "signal_smoothed are empty"
         )
 
-    k = optics.optical_constant(config.optical)
+    # K is a constant y-scale on Kc/I, and A2*Mw = slope/(2*intercept) does not
+    # see a constant y-scale -- the same cancellation that makes alpha optional.
+    # So an undeclared dn_dc costs exactly the absolute quantities and nothing
+    # else: the run still yields A2*Mw and k_D, which is most of what an
+    # uncalibrated ACD run is for. Refusing to fit at all would withhold two
+    # correct numbers to punish a missing answer they never depended on.
+    if config.optical.dn_dc is None:
+        k = 1.0
+        calibrated = False
+        state.paths.append(
+            PathChoice(
+                question="dn_dc",
+                decision="fit on an arbitrary optical constant",
+                because=(
+                    "dn_dc has not been declared, so K is unknown. K is a constant "
+                    "y-scale on Kc/I and cancels in slope/intercept, so A2*Mw and "
+                    "k_D are exactly right regardless; Mw, A2 and A3 are withheld "
+                    "rather than reported carrying an unknown factor."
+                ),
+                alternatives=["declare sample_class, or dn_dc directly"],
+                blocked=["Mw", "A2", "A3"],
+            )
+        )
+        state.blocked.extend(["Mw", "A2", "A3"])
+    else:
+        k = optics.optical_constant(config.optical)
     state.concentration = concentration
     state.kc_over_i = build_kc_over_i(concentration, intensity, k)
 

@@ -280,14 +280,31 @@ def run_process(args) -> int:
 
 
 def _session_config(args) -> tuple[RunConfig, dict[str, Declaration], str]:
-    """Build the run configuration an agent session starts from.
+    """Build the run configuration a session starts from.
 
-    Two entry shapes. With ``--raw`` and ``--declarations``, the configuration
-    is *derived* from what a person declared, exactly as ``process`` derives it,
-    so a run cannot be declared one thing and analysed as another. Without them
-    the session still starts -- a researcher asking about past work should not
-    have to nominate a run first -- and the agent reports the run as unloaded
-    until it is pointed at a file.
+    Three entry shapes, and the important one is the third.
+
+    With ``--raw`` and ``--declarations``, the configuration is *derived* from
+    what a person declared, exactly as ``process`` derives it, so a run cannot
+    be declared one thing and analysed as another.
+
+    With ``--config``, it is whatever that file says.
+
+    With **just a raw file, or nothing at all**, the configuration is bare:
+    every physical constant is ``None``, meaning nobody has answered yet. That
+    is a real state rather than a failure. The trace loads, the anomalies are
+    found, the smoothing band is computed and the figures draw, because none of
+    that needs optics -- and the columns that do need an answer are blocked with
+    the reason recorded, which ``concentration_column`` and the rest have always
+    done. Declarations arrive through ``set_declaration`` as the researcher
+    supplies them, attributed and timestamped, and land in the run's own record.
+
+    What used to happen instead was worse than requiring the file. A session
+    with no declarations was scaffolded from ``examples/run_config.example.json``
+    -- so ``dn_dc`` was silently 0.150, and a protein run taken all the way to
+    ``extract_parameters`` would have reported a molar mass a third out with a
+    clean fit and no warning anywhere. An invented constant is the one thing
+    this pipeline must never carry, and it was carrying one by default.
     """
     if args.raw and args.declarations:
         stored = read_json(args.declarations)
@@ -303,29 +320,22 @@ def _session_config(args) -> tuple[RunConfig, dict[str, Declaration], str]:
         )
         return config, declarations, run_id
 
-    run_id = args.run_id or "session"
     if args.config:
-        return load_config(args.config), {}, run_id
+        return load_config(args.config), {}, args.run_id or "session"
 
-    # No run nominated. The session still needs a configuration object to hang
-    # the tool surface on, and it is not this command's place to invent one:
-    # dn_dc alone is 0.185 for a protein and 0.150 for a polysaccharide, and a
-    # default would be the exact failure the intake interview exists to prevent
-    # -- a run processed under a physical model nobody chose. The reviewed
-    # example config in the repo is used as scaffolding, and nothing is computed
-    # against it until a real run is loaded.
-    example = paths.example_config()
-    if example.exists():
-        config = load_config(example)
-        return config.model_copy(update={"run_id": run_id, "source_file": args.raw or "none"}), {}, run_id
+    if args.raw:
+        run_id = args.run_id or new_run_id(Path(args.raw).stem[:16])
+    else:
+        run_id = args.run_id or "session"
 
-    raise MissingDeclarations(
-        [
-            "a run (--raw with --declarations), or a configuration (--config). "
-            "There is no default: dn_dc is 0.185 for a protein and 0.150 for a "
-            "polysaccharide, and guessing it would process the run under a "
-            "physical model nobody chose"
-        ]
+    return (
+        RunConfig(
+            run_id=run_id,
+            source_file=args.raw or "none",
+            channel=args.channel or DEFAULT_CHANNEL,
+        ),
+        {},
+        run_id,
     )
 
 
@@ -1433,10 +1443,11 @@ def main(argv: list[str] | None = None) -> int:
         # normal way to start -- searching what the lab did before does not need
         # a file in hand -- and the agent reports the run as unloaded until it
         # is pointed at one.
-        if bool(args.raw) != bool(args.declarations):
+        if args.declarations and not args.raw:
             parser.error(
-                "--raw and --declarations go together: a run is analysed under "
-                "what a person declared it to be, never under one without the other"
+                "--declarations names what a run is, so it needs the run: pass "
+                "--raw as well. A raw file on its own is fine -- it opens "
+                "undeclared, and what is undeclared is blocked rather than guessed."
             )
         return run_gui(args) if args.stage == "gui" else run_agent(args)
 

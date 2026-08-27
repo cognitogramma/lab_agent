@@ -28,6 +28,16 @@ import numpy as np
 from polyrmc.config import AVOGADRO, TOLUENE_RAYLEIGH_RATIO, OpticalConfig
 
 
+class UndeclaredConstant(ValueError):
+    """A physical constant was needed and nobody has supplied it.
+
+    Its own type so callers can tell it from a numerical failure. A run that
+    cannot compute K because nobody said what the sample is has not gone wrong;
+    it is waiting on a person, and the difference matters to whoever reads the
+    message.
+    """
+
+
 def optical_constant(config: OpticalConfig) -> float:
     """The constant K for vertically polarized light.
 
@@ -35,7 +45,19 @@ def optical_constant(config: OpticalConfig) -> float:
 
     Units are mol*cm^2/g^2, so that Kc/I_R comes out in mol/g and its
     intercept is 1/Mw.
+
+    Raises when ``dn_dc`` has not been declared. There is no default worth
+    having: 0.185 for a protein against 0.150 for a polysaccharide moves K by a
+    factor of 1.52 and Mw by a third, and the resulting molar mass looks
+    entirely reasonable. Refusing is the only honest answer.
     """
+    if config.dn_dc is None:
+        raise UndeclaredConstant(
+            "dn_dc has not been declared, so K cannot be computed. It is 0.185 "
+            "cm^3/g for a protein or peptide and 0.150 for a polysaccharide, and "
+            "the trace cannot tell you which this is -- the two look identical. "
+            "Declare sample_class, or dn_dc directly."
+        )
     wavelength_cm = config.wavelength_nm * 1e-7
     return float(
         4.0
