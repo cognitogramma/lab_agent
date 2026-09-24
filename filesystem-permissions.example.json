@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "read_roots": ["C:/Users/YourName/Desktop", "C:/Users/YourName/Documents"],
+  "write_roots": ["C:/Users/YourName/Desktop", "C:/Users/YourName/Documents"],
+  "denied_paths": []
+}

@@ -1,4 +1,6 @@
 .env
+filesystem-permissions.json
+*.polyrmc-backup-*
 __pycache__/
 *.pyc
 .pytest_cache/

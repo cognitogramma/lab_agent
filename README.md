@@ -1,5 +1,9 @@
 # PolyRMC Light-Scattering Processing Pipeline
 
+Agent access to local files can be configured in `filesystem-permissions.json`.
+See [filesystem access](docs/filesystem-access.md) for setup, exclusions, backups,
+and the GUI's **Session > File permissions...** command.
+
 An auditable analysis pipeline for automatic continuous dilution (ACD)
 light-scattering data, with subjective analysis decisions encoded as explicit,
 reviewable logic rather than left in an analyst's head.

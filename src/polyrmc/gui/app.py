@@ -116,6 +116,7 @@ class Workbench(tk.Tk):
         session = tk.Menu(bar, tearoff=0)
         session.add_command(label="Open a run...", command=self.open_run)
         session.add_command(label="Provider and key...", command=self.sign_in)
+        session.add_command(label="File permissions...", command=self.show_file_permissions)
         session.add_separator()
         session.add_command(label="Copy the transcript", command=self.copy_transcript)
         session.add_command(label="Open the session log", command=self.open_log)
@@ -138,6 +139,30 @@ class Workbench(tk.Tk):
         help_menu.add_command(label="Providers on this machine", command=self.show_providers)
         bar.add_cascade(label="Help", menu=help_menu)
         self.configure(menu=bar)
+
+    def show_file_permissions(self) -> None:
+        """Show the effective general-file policy without invoking a model."""
+        import json
+        from textwrap import fill
+
+        from polyrmc.tools import Rejected
+
+        try:
+            policy = json.loads(self.session.context.files.permissions())
+            details = (
+                "Read: " + ", ".join(policy["read_roots"]) + "\n\n"
+                "Write: " + ", ".join(policy["write_roots"]) + "\n\n"
+                "Excluded folders:\n" + fill(", ".join(policy["protected_folders"]), 85) + "\n\n"
+                "Additional exclusions: " + (", ".join(policy["denied_paths"]) or "None") + "\n\n"
+                "System and credential files (.env, Windows hives), and this policy are protected.\n\n"
+                + fill(policy["limits"], 85) + "\n\n"
+                "Existing-file replacements require a current hash and save a backup.\n"
+                "Read content is sent to your model provider and recorded in the session log.\n\n"
+                "Local settings: " + policy["policy_file"]
+            )
+        except Rejected as error:
+            details = str(error)
+        messagebox.showinfo("Agent file permissions", details, parent=self)
 
     def _build_layout(self) -> None:
         p = theme.PALETTE
