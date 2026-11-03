@@ -19,3 +19,7 @@ langchain-anthropic>=1.0
 langchain-openai>=1.0
 
 pytest>=8.0
+
+# General web search; the arXiv paper search also works without this package.
+ddgs>=9.0,<10
+customtkinter>=5.2,<6

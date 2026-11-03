@@ -1,4 +1,17 @@
-# LAB.md — PolyRMC, Tulane
+# LAB.md — Continuum Spectranalytics, Tulane
+
+## Project mission
+
+Continuum Spectranalytics is a research workspace for literature review and
+storing research ideas. Its lasting value is a connected record of sources,
+critical synthesis, open questions, hypotheses, and the next experiments to try.
+
+Review original sources when available, cite the material actually read, and
+distinguish published findings from lab observations and proposed ideas. Save
+ideas with their rationale, evidence, source links, author, and next step so
+future sessions can retrieve and build on them. A hypothesis stays a hypothesis
+until evidence supports it. Light-scattering analysis remains the project's
+deterministic measurement foundation.
 
 Instrument context and house conventions. This file is always in the agent's
 context, whole. Swapping it swaps the lab; nothing is retrained.

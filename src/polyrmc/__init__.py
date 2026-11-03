@@ -1,4 +1,4 @@
-"""PolyRMC light-scattering processing pipeline.
+"""Continuum Spectranalytics research workspace and scattering pipeline.
 
 An auditable analysis pipeline for automatic continuous dilution (ACD)
 light-scattering data.
@@ -14,3 +14,4 @@ checked by ``tests/test_tier0_purity.py``.
 """
 
 __version__ = "0.1.0"
+APP_NAME = "Continuum Spectranalytics"

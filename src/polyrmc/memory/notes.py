@@ -22,14 +22,17 @@ disagrees with one should be able to open it in an editor and delete the line.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from polyrmc import paths
 
 NOTES_FILENAME = "notes.json"
+RESEARCH_IDEA_TAG = "research-idea"
 
 
 def _now() -> str:
@@ -108,11 +111,27 @@ class NoteBook:
         return self.notes
 
     def save(self) -> Path:
+        """Replace the notebook only after a complete sibling file is flushed."""
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps([n.to_dict() for n in self.notes], indent=2),
-            encoding="utf-8",
-        )
+        temporary: Path | None = None
+        try:
+            # A sibling lives on the same filesystem, so replacement is atomic.
+            # Close before replacing: Windows does not allow replacing an open file.
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.directory,
+                                    prefix=f".{NOTES_FILENAME}.", suffix=".tmp",
+                                    delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump([note.to_dict() for note in self.notes], stream, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.replace(self.path)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    # Cleanup must not hide the original persistence failure.
+                    pass
         return self.path
 
     def add(
@@ -146,7 +165,11 @@ class NoteBook:
             tags=[str(t).strip() for t in (tags or []) if str(t).strip()],
         )
         self.notes.append(note)
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            self.notes.remove(note)
+            raise
         return note
 
     def search(
@@ -174,8 +197,44 @@ class NoteBook:
         results.sort(key=lambda n: n.created_at, reverse=True)
         return results[:limit]
 
+    def add_research_idea(
+        self,
+        title: str,
+        idea: str,
+        author: str,
+        *,
+        evidence: str = "",
+        source_urls: list[str] | None = None,
+        next_step: str = "",
+        run_id: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Note:
+        """Keep a hypothesis and its context in the searchable notebook.
+
+        Labels survive both JSON round trips and ordinary notebook rendering.
+        A research idea is explicitly provisional, even when it cites a source;
+        it is never added to measured run provenance.
+        """
+        if not str(idea).strip():
+            raise ValueError("a research idea needs an idea or hypothesis")
+        urls = list(dict.fromkeys(str(url).strip() for url in (source_urls or []) if str(url).strip()))
+        body = ["Research idea — unverified hypothesis", f"Idea: {str(idea).strip()}"]
+        if str(evidence).strip():
+            body.append(f"Evidence / motivation: {str(evidence).strip()}")
+        if urls:
+            body.append("Sources:\n" + "\n".join(urls))
+        if str(next_step).strip():
+            body.append(f"Next step: {str(next_step).strip()}")
+        idea_tags = [RESEARCH_IDEA_TAG, *(tags or [])]
+        return self.add(title, "\n".join(body), author, run_id=run_id,
+                        tags=list(dict.fromkeys(idea_tags)))
+
+    def research_ideas(self, query: str | None = None, limit: int = 20) -> list[Note]:
+        """Retrieve saved ideas without mixing them with measured observations."""
+        return self.search(query=query, tag=RESEARCH_IDEA_TAG, limit=limit)
+
     def __len__(self) -> int:
         return len(self.notes)
 
 
-__all__ = ["NOTES_FILENAME", "Note", "NoteBook"]
+__all__ = ["NOTES_FILENAME", "RESEARCH_IDEA_TAG", "Note", "NoteBook"]

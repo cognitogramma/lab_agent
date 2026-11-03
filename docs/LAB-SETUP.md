@@ -1,4 +1,4 @@
-# PolyRMC — setting it up in the lab
+# Continuum Spectranalytics — setting it up in the lab
 
 Everything here is Windows PowerShell, because that is what the instrument
 machines run. Nothing in this document needs an API key until the section that

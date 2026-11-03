@@ -27,6 +27,49 @@ C0 = 4.0e-3  # g/cm^3
 OVERLAP_C = 2.0e-3  # above this the virial expansion is visibly failing
 
 
+@pytest.fixture(scope="session")
+def gui_app(tmp_path_factory):
+    """One real Tk interpreter for all GUI and font checks on Windows."""
+    import time
+    from types import SimpleNamespace
+
+    tk = pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
+    from polyrmc import paths
+    from polyrmc.agent.toolcall import SPECS
+    from polyrmc.gui.app import Workbench
+
+    example = paths.example_config()
+    if not example.exists():
+        pytest.skip("no example configuration to scaffold a session from")
+    session = tmp_path_factory.mktemp("gui-session")
+    patch = pytest.MonkeyPatch()
+    patch.setenv(paths.ROOT_ENV, str(tmp_path_factory.mktemp("gui-root")))
+    for spec in SPECS.values():
+        for key in spec.env_keys:
+            patch.delenv(key, raising=False)
+    args = SimpleNamespace(
+        config=str(example), raw=None, declarations=None, run_id="windowed",
+        channel=None, runs_dir=str(session / "runs"), notes_dir=str(session / "memory"),
+        out=None, author="tester", provider=None, model=None, max_steps=4,
+        auto_approve=False, budget_requests=0, budget_tokens=0,
+        min_request_interval=0.0, verbose=False, no_prompt=False, prompt=None,
+    )
+    try:
+        built = Workbench(args)
+    except tk.TclError as error:
+        patch.undo()
+        pytest.skip(f"no display: {error}")
+    built.withdraw()
+    deadline = time.monotonic() + 0.3
+    while time.monotonic() < deadline:
+        built.update()
+        time.sleep(0.005)
+    yield built
+    built.close()
+    patch.undo()
+
+
 def seconds_to_wrapping_mmss(seconds: float) -> str:
     """Format as MM:SS.s, resetting to zero every hour like the instrument does."""
     within_hour = seconds % 3600.0

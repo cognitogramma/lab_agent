@@ -12,9 +12,9 @@ sits unopened. Beside that: the run state is permanently on screen rather than
 recalled with ``/state``, and the commit gate is a dialog that has to be
 answered rather than a prompt that can be typed past.
 
-Nothing in here is required to process data. It imports Tk, which every CPython
-install on Windows and macOS ships, and matplotlib, which the measurement path
-already depends on -- so the window costs no new dependency. If Tk is missing,
+Nothing in here is required to process data. The window uses Tk, CustomTkinter,
+and matplotlib. Install its optional controls with ``pip install -e .[gui]``.
+If Tk is missing,
 :func:`launch` says so and names the terminal session, which does everything the
 window does apart from showing you the picture.
 
@@ -36,6 +36,9 @@ def launch(args) -> int:
     try:
         from polyrmc.gui.app import launch as _launch
     except ImportError as error:  # tkinter absent from this Python
+        if error.name == "customtkinter":
+            print("Install the desktop controls with: python -m pip install -e .[gui]")
+            return 2
         print(
             f"the window needs tkinter, which this Python does not have: {error}\n\n"
             "On Linux it is usually a separate package (python3-tk). Everything "

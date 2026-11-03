@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "polyrmc"
+name = "continuum-spectranalytics"
 version = "0.1.0"
-description = "Auditable processing pipeline for ACD light-scattering data"
+description = "Literature review, durable research ideas, and auditable light-scattering analysis"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",
@@ -28,14 +28,14 @@ agent = [
 # One per provider, because you buy your own tokens and there is no reason to
 # install an SDK for a vendor you will never key. A missing one is reported as
 # "pip install <name>" rather than a stack trace.
-gemini = ["polyrmc[agent]", "langchain-google-genai>=2.0"]
-claude = ["polyrmc[agent]", "langchain-anthropic>=1.0"]
-openai = ["polyrmc[agent]", "langchain-openai>=1.0"]
+gemini = ["continuum-spectranalytics[agent]", "langchain-google-genai>=2.0"]
+claude = ["continuum-spectranalytics[agent]", "langchain-anthropic>=1.0"]
+openai = ["continuum-spectranalytics[agent]", "langchain-openai>=1.0"]
 
 # The old name for the Gemini set. Kept because the README and the lab's own
 # notes say `pip install -e .[judge]`, and silently removing an extra fails at
 # install time with nothing pointing at the new spelling.
-judge = ["polyrmc[gemini]"]
+judge = ["continuum-spectranalytics[gemini]"]
 
 # Running the suite. Separate from the base install because a lab machine that
 # only processes data does not need it -- but the documented way to verify an
@@ -43,10 +43,19 @@ judge = ["polyrmc[gemini]"]
 # machine with no pytest and a setup guide whose own verification step failed.
 test = ["pytest>=8.0"]
 
-all = ["polyrmc[gemini,claude,openai,test]"]
+# Internet search is independent of the model providers. arXiv needs only the
+# standard library; general web search uses DDGS and needs no API key.
+search = ["ddgs>=9.0,<10"]
+gui = ["customtkinter>=5.2,<6"]
+
+all = ["continuum-spectranalytics[gemini,claude,openai,test,search,gui]"]
 
 [project.scripts]
+continuum = "polyrmc.cli:main"
 polyrmc = "polyrmc.cli:main"
+
+[project.urls]
+Repository = "https://github.com/cognitogramma/lab_agent"
 
 [tool.setuptools.packages.find]
 where = ["src"]

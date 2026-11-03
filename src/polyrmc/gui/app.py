@@ -30,23 +30,19 @@ account, not a second account.
 from __future__ import annotations
 
 import tkinter as tk
+import customtkinter as ctk
 from pathlib import Path
 from tkinter import messagebox, ttk
 from types import SimpleNamespace
 from typing import Any
 
-from polyrmc import paths
+from polyrmc import APP_NAME, paths
 from polyrmc.gui import theme
 from polyrmc.gui.session import Bridge, Signal
 from polyrmc.gui.widgets import (
     ApprovalDialog,
-    FigurePanel,
     OpenRunDialog,
-    SearchPanel,
     SignInDialog,
-    StatePanel,
-    ToolsPanel,
-    Transcript,
     open_externally,
 )
 
@@ -59,15 +55,19 @@ modal dialog, which is why it reschedules itself before doing anything.
 """
 
 OPENING = (
-    "Point me at a run, ask about one we processed before, or ask a question "
-    "about the measurement. Commits stop and ask you first."
+    "Review the literature, connect sources, and keep research ideas in Ideas & notes. "
+    "Source search, saved papers, past runs and notes work without a model key. "
+    "Changes to a run stop and ask you first."
 )
 
 
-class Workbench(tk.Tk):
+class Workbench(ctk.CTk):
     """One session, one window."""
 
     def __init__(self, args) -> None:
+        # Awareness must be set before Tk creates its first native window and
+        # caches font metrics; otherwise Windows stretches its bitmap output.
+        ctk.ScalingTracker.activate_high_dpi_awareness()
         super().__init__()
         from polyrmc.agent.budget import Budget, rates_from_env
         from polyrmc.agent.orchestrator import ApprovalPolicy, allow_all, deny_all
@@ -77,11 +77,17 @@ class Workbench(tk.Tk):
 
         self.args = args
         self.fonts = theme.apply(self)
-        self.title("PolyRMC")
-        self.geometry("1280x820")
-        self.minsize(940, 620)
+        self.title(APP_NAME)
+        scale = ctk.ScalingTracker.get_window_scaling(self)
+        width = min(1440, max(640, int(self.winfo_screenwidth() / scale) - 40))
+        height = min(900, max(480, int(self.winfo_screenheight() / scale) - 80))
+        self.geometry(f"{width}x{height}")
+        self.minsize(min(1100, width), min(720, height))
 
         self.session = open_session(args)
+        from polyrmc.literature_store import ReadingLibrary
+
+        self.reading_library = ReadingLibrary(paths.project_root() / "data" / "literature")
         self.registry = build_registry()
         self.log = SessionLog()
         self.narrator = Narrator(self.log)
@@ -93,6 +99,7 @@ class Workbench(tk.Tk):
         )
         self.provider: Any = None
         self.agent: Any = None
+        self._literature_review_text: str | None = None
         self.bridge = Bridge(agent=None, surface=self.session.surface)
         self.verbose = tk.BooleanVar(value=bool(getattr(args, "verbose", False)))
         self.dead = False
@@ -105,16 +112,20 @@ class Workbench(tk.Tk):
         # Escape is the reflex when something is running away with itself, and
         # it costs nothing when nothing is: `stop` returns immediately if the
         # bridge is idle.
-        self.bind("<Escape>", lambda _e: self.stop())
+        self.bind("<Escape>", self._escape)
+        self.bind("<Control-k>", lambda _e: self.show_research())
+        self.bind("<Control-o>", self._open_run_shortcut)
+        self.bind("<Control-l>", lambda _e: self.show_assistant())
+        self.bind("<Control-j>", lambda _e: self.toggle_assistant())
         self._pump_id = self.after(POLL_MS, self._pump)
         self.after(60, self._start_session)
 
     # --- construction -----------------------------------------------------
 
     def _build_menu(self) -> None:
-        bar = tk.Menu(self)
+        bar = tk.Menu(self, tearoff=0)
         session = tk.Menu(bar, tearoff=0)
-        session.add_command(label="Open a run...", command=self.open_run)
+        session.add_command(label="Open a run...", command=self.open_run, accelerator="Ctrl+O")
         session.add_command(label="Provider and key...", command=self.sign_in)
         session.add_command(label="File permissions...", command=self.show_file_permissions)
         session.add_separator()
@@ -125,6 +136,10 @@ class Workbench(tk.Tk):
         bar.add_cascade(label="Session", menu=session)
 
         view = tk.Menu(bar, tearoff=0)
+        view.add_command(label="Internet research", command=self.show_research, accelerator="Ctrl+K")
+        view.add_command(label="Show or hide research assistant", command=self.toggle_assistant, accelerator="Ctrl+J")
+        view.add_command(label="Reset workspace", command=self.reset_layout)
+        view.add_separator()
         view.add_checkbutton(
             label="Show full tool output", variable=self.verbose,
             onvalue=True, offvalue=False,
@@ -138,7 +153,7 @@ class Workbench(tk.Tk):
         help_menu.add_command(label="What this session costs", command=self.show_cost)
         help_menu.add_command(label="Providers on this machine", command=self.show_providers)
         bar.add_cascade(label="Help", menu=help_menu)
-        self.configure(menu=bar)
+        self._app_menu = bar
 
     def show_file_permissions(self) -> None:
         """Show the effective general-file policy without invoking a model."""
@@ -165,114 +180,86 @@ class Workbench(tk.Tk):
         messagebox.showinfo("Agent file permissions", details, parent=self)
 
     def _build_layout(self) -> None:
-        p = theme.PALETTE
+        from polyrmc.gui.layout import build_layout
 
-        header = ttk.Frame(self, padding=(16, 10, 16, 8))
-        header.pack(fill="x")
-        self.run_label = ttk.Label(header, text="", style="Heading.TLabel")
-        self.run_label.pack(side="left")
-        self.model_label = ttk.Label(header, text="", style="Quiet.TLabel")
-        self.model_label.pack(side="right")
-        ttk.Separator(self, orient="horizontal").pack(fill="x")
+        build_layout(self)
 
-        split = ttk.PanedWindow(self, orient="horizontal")
-        split.pack(fill="both", expand=True)
+    def reset_layout(self) -> None:
+        self.hide_assistant()
 
-        self.tabs = ttk.Notebook(split)
-        self.state_panel = StatePanel(self.tabs, self.fonts)
-        self.tools_panel = ToolsPanel(
-            self.tabs, self.fonts, self.registry, self.always_allow
-        )
-        self.runs_panel = SearchPanel(
-            self.tabs, self.fonts,
-            "sample, buffer or run id -- read straight from the provenance sidecars",
-            lambda q: self._call_tool("search_past_runs", {"query": q or None}),
-        )
-        self.notes_panel = SearchPanel(
-            self.tabs, self.fonts,
-            "what earlier sessions concluded, kept apart from run provenance",
-            lambda q: self._call_tool("read_notes", {"query": q or None}),
-        )
-        self.figures = FigurePanel(
-            self.tabs, self.fonts,
-            [self.session.runs_dir / "figures", paths.project_root() / "data" / "figures"],
-        )
-        for panel, name in (
-            (self.state_panel, "state"),
-            (self.figures, "figures"),
-            (self.runs_panel, "past runs"),
-            (self.notes_panel, "notes"),
-            (self.tools_panel, "tools"),
-        ):
-            self.tabs.add(panel, text=name)
-        split.add(self.tabs, weight=2)
+    def search_global(self, _event=None) -> str:
+        query = self.global_query.get().strip()
+        self.show_research()
+        if query:
+            self.research_panel.query.delete(0, "end")
+            self.research_panel.query.insert(0, query)
+            self.research_panel.search()
+        return "break"
 
-        right = ttk.Frame(split, style="Paper.TFrame")
-        self.transcript = Transcript(right, self.fonts)
-        self.transcript.pack(fill="both", expand=True)
-
-        composer = tk.Frame(right, background=p.panel, padx=14, pady=10)
-        composer.pack(fill="x")
-        box = tk.Frame(composer, background=p.paper, highlightthickness=1,
-                       highlightbackground=p.rule)
-        box.pack(fill="x")
-        self.entry = tk.Text(
-            box, height=3, wrap="word", background=p.paper, foreground=p.ink,
-            font=self.fonts.body, borderwidth=0, highlightthickness=0,
-            padx=10, pady=8, insertbackground=p.ink,
-        )
-        self.entry.pack(side="left", fill="both", expand=True)
-        self.entry.bind("<Return>", self._on_return)
-        self.entry.bind("<Shift-Return>", lambda _e: None)
-        self.ask_button = ttk.Button(
-            composer, text="Ask", style="Accent.TButton", command=self.submit
-        )
-        self.ask_button.pack(side="right", pady=(8, 0))
-        ttk.Label(
-            composer, text="Enter sends  ·  Shift+Enter for a new line  ·  / for commands",
-            style="Faint.TLabel",
-        ).pack(side="left", pady=(8, 0))
-        split.add(right, weight=5)
-        # Placed on the first real <Configure> rather than from here or from a
-        # timer. A ttk paned window has no geometry until it is mapped, and a
-        # sash set before that is silently dropped -- which left the panels at
-        # one pixel wide and the window looking like a chat box.
-        self._split = split
-        self._sash_placed = False
-        split.bind("<Configure>", self._place_sash)
-
-        status = ttk.Frame(self, padding=(14, 6))
-        status.pack(fill="x", side="bottom")
-        ttk.Separator(self, orient="horizontal").pack(fill="x", side="bottom")
-        self.spend_label = ttk.Label(status, text="", style="Faint.TLabel")
-        self.spend_label.pack(side="left")
-        self.log_label = ttk.Label(status, text="", style="Faint.TLabel", cursor="hand2")
-        self.log_label.pack(side="right")
-        self.log_label.bind("<Button-1>", lambda _e: self.open_log())
-        self.progress = ttk.Progressbar(status, mode="indeterminate", length=110)
-        self.entry.focus_set()
-
-    SASH = 460
-    """Where the panels end and the conversation begins, in pixels.
-
-    Wide enough for the state panel's longest line -- a blocked reason, which is
-    a sentence -- without wrapping it, since a wrapped reason is the one a
-    researcher skims.
-    """
-
-    def _place_sash(self, _event=None) -> None:
-        """Split the window once, the first time it has a width to split."""
-        # The threshold is the sash plus a usable conversation, not twice the
-        # sash: the window's own minimum width is 940, and a test of 2*460 would
-        # sit close enough to it that a slightly narrow window never got split
-        # at all.
-        if self._sash_placed or self._split.winfo_width() < self.SASH + 220:
-            return
-        self._sash_placed = True
+    def show_menu(self) -> None:
         try:
-            self._split.sashpos(0, self.SASH)
-        except tk.TclError:
-            pass
+            self._app_menu.tk_popup(self.menu_button.winfo_rootx(),
+                                     self.menu_button.winfo_rooty() + self.menu_button.winfo_height())
+        finally:
+            self._app_menu.grab_release()
+
+    def _open_run_shortcut(self, _event=None) -> str:
+        self.open_run()
+        return "break"
+
+    def show_assistant(self) -> str:
+        self.drawer.grid()
+        self.assistant_visible = True
+        self.assistant_toggle.configure(text="Hide assistant")
+        self.entry.focus_set()
+        return "break"
+
+    def hide_assistant(self) -> None:
+        self.drawer.grid_remove()
+        self.assistant_visible = False
+        self.assistant_toggle.configure(text="Research assistant")
+        self.tabs.focus_set()
+
+    def toggle_assistant(self) -> None:
+        if self.assistant_visible:
+            self.hide_assistant()
+        else:
+            self.show_assistant()
+
+    def _wrap_header(self, width: int) -> None:
+        self.run_label.configure(wraplength=max(280, width - 410))
+        self.model_label.configure(wraplength=330)
+
+    def _navigate(self, key: str) -> None:
+        panel = self._panels.get(key)
+        if panel is not None:
+            self.tabs.select(panel)
+            if key == "notes":
+                self.notes_panel.search()
+
+    def _sync_navigation(self, _event=None) -> None:
+        selected = self.tabs.select()
+        titles = {
+            "run": "Workbench", "figures": "Visuals & insights", "research": "Literature review",
+            "runs": "Past experiments", "notes": "Research ideas & notes", "tools": "Agent tools",
+        }
+        for key, panel in self._panels.items():
+            if selected == str(panel):
+                self.navigation.select(key)
+                self.page_title.configure(text=titles[key])
+                break
+
+    def show_research(self) -> str:
+        self.tabs.select(self.research_panel)
+        self.research_panel.refresh_context()
+        self.research_panel.query.focus_set()
+        return "break"
+
+    def _escape(self, _event=None) -> None:
+        if self.tabs.select() == str(self.research_panel) and self.research_panel.busy:
+            self.research_panel.cancel()
+        else:
+            self.stop()
 
     def _log_warnings(self) -> None:
         """Provider SDK warnings belong in the log, not on top of the run.
@@ -294,7 +281,7 @@ class Workbench(tk.Tk):
     def _start_session(self) -> None:
         self._refresh_header()
         self.state_panel.show(self._render_state())
-        self.transcript.note(OPENING)
+        self.research_panel.refresh_context()
         self._connect(announce=True)
         self.log.banner(
             run=self.session.run_id,
@@ -304,10 +291,9 @@ class Workbench(tk.Tk):
             surface="gui",
         )
         indexed = self._past_run_count()
-        self.transcript.note(
-            f"memory: {indexed} past run(s) in {paths.relative_to_root(self.session.runs_dir)}, "
-            f"{len(self.session.notes)} note(s)"
-        )
+        self.state_panel.empty.set_library(indexed, len(self.session.notes))
+        if indexed or len(self.session.notes):
+            self.transcript.note(f"{indexed} past experiments  ·  {len(self.session.notes)} research notes available")
         self._refresh_status()
 
     def _connect(self, announce: bool = False) -> None:
@@ -335,9 +321,8 @@ class Workbench(tk.Tk):
         if kind is None:
             if announce:
                 self.transcript.note(
-                    "No provider is keyed on this machine, so there is no brain to ask. "
-                    "The panels and every deterministic stage still work. "
-                    "Session > Provider and key... to sign in."
+                    "Connect a model in Model settings to start a conversation. "
+                    "Research and your local workspace are ready to use."
                 )
         else:
             try:
@@ -357,6 +342,7 @@ class Workbench(tk.Tk):
                 approvals=self.policy,
                 registry=self.registry,
                 max_steps=self.args.max_steps,
+                max_web_calls=getattr(self.args, "max_web_calls", 8),
                 budget=self.budget,
             )
             if announce:
@@ -416,6 +402,7 @@ class Workbench(tk.Tk):
             self.log.write("rate limit", f"waiting {seconds:.1f}s -- {reason}")
             self.transcript.action(headline, reason)
         elif kind == "crash":
+            self._literature_review_text = None
             self.transcript.banner(
                 "the session hit a bug",
                 signal.payload,
@@ -437,12 +424,19 @@ class Workbench(tk.Tk):
         self.narrator.lines(event)
 
         kind = event.kind
+        if kind in {"failed", "stopped", "capped"}:
+            self._literature_review_text = None
         if kind == "text":
             self.transcript.model(event.text)
+            if self._literature_review_text is not None:
+                self._literature_review_text = event.text
         elif kind == "call":
             arguments = dict(event.call.arguments) if event.call else {}
             self.transcript.action(activity(event.tool), hint(arguments))
         elif kind == "result":
+            if event.tool in {"search_internet", "review_literature"}:
+                if self.research_panel.show_results(event.text):
+                    self.tabs.select(self.research_panel)
             if self.verbose.get():
                 self.transcript.output(event.text)
         elif kind == "refused":
@@ -490,15 +484,22 @@ class Workbench(tk.Tk):
         request.reply(answer)
 
     def _finish(self, outcome: str) -> None:
+        review, self._literature_review_text = self._literature_review_text, None
+        if outcome == "ok" and review:
+            self.research_panel.show_review(review)
+            self.tabs.select(self.research_panel)
+            self.hide_assistant()
+        if outcome == "dead":
+            self.dead = True
         self._busy(False)
         self._refresh_status()
         self.state_panel.show(self._render_state())
+        self.research_panel.refresh_context()
         self.figures.refresh()
         if outcome == "dead":
             # The brain is gone. There is no failover onto another of the
             # researcher's keys on purpose: that is their money, and moving a
             # session onto a second key is a spending decision that is theirs.
-            self.dead = True
             self.ask_button.configure(state="disabled")
             self.transcript.note(
                 "The session is over -- nothing committed is lost. Reopen and the "
@@ -520,26 +521,28 @@ class Workbench(tk.Tk):
             self.entry.delete("1.0", "end")
             self._slash(line)
             return
+        self.show_assistant()
         if self.dead:
             # The button is disabled, but Enter in the box is not the button.
             # Re-asking here would spend another request on the key that just
             # refused one.
             self.transcript.note(
                 "That provider stopped answering, so there is nothing left to ask. "
-                "Session > Provider and key... to carry on with another one; the "
+                "Menu > Session > Provider and key... to carry on with another one; the "
                 "panels and every slash command still work as they are."
             )
             return
         if self.agent is None:
             self.transcript.note(
                 "No model is configured, so there is nothing to ask. "
-                "Session > Provider and key... to sign in."
+                "Use Model settings in the assistant to sign in."
             )
             return
         if self.bridge.busy:
             self.transcript.note("still working on the last question.")
             return
         self.entry.delete("1.0", "end")
+        self.welcome.pack_forget()
         self.transcript.you(line)
         self.narrator.user(line)
         self._busy(True)
@@ -554,21 +557,26 @@ class Workbench(tk.Tk):
         not currently useful. The button is always the thing you can do now.
         """
         if working:
+            self.show_assistant()
+            self.activity_label.configure(text="Working…")
             self.ask_button.configure(
-                text="Stop", style="Commit.TButton", command=self.stop, state="normal"
+                text="Stop", fg_color=theme.PALETTE.commit, text_color=theme.PALETTE.accent_ink,
+                hover_color="#DCA34C", command=self.stop, state="normal"
             )
             self.entry.configure(state="disabled")
             self.progress.pack(side="right", padx=(0, 14))
             self.progress.start(14)
         else:
+            self.activity_label.configure(text="Ready" if not self.dead else "Provider unavailable")
             self.ask_button.configure(
-                text="Ask", style="Accent.TButton", command=self.submit,
+                text="Ask", fg_color=theme.PALETTE.accent, text_color=theme.PALETTE.accent_ink,
+                hover_color=theme.PALETTE.accent_hover, command=self.submit,
                 state="disabled" if self.dead else "normal",
             )
             self.entry.configure(state="normal")
             self.progress.stop()
             self.progress.pack_forget()
-            if not self.dead:
+            if not self.dead and self.assistant_visible:
                 self.entry.focus_set()
 
     def stop(self) -> None:
@@ -585,6 +593,7 @@ class Workbench(tk.Tk):
         if not self.bridge.busy:
             return
         self.bridge.request_stop()
+        self.activity_label.configure(text="Waiting for current task to finish…")
         self.ask_button.configure(text="stopping...", state="disabled")
         self.transcript.note(
             "stopping -- waiting for the model call or tool already running to "
@@ -600,6 +609,7 @@ class Workbench(tk.Tk):
 /history           what the agent has run this session
 /runs [query]      search past experiments, no model call
 /notes [query]     read notes filed in earlier sessions
+/search [query]    find sources and lab memory in Literature
 /always <tool>     pre-approve one commit tool for this session
 /auto              approve every commit for the rest of the session
 /cost              requests and tokens spent on your key this session
@@ -630,6 +640,12 @@ class Workbench(tk.Tk):
             self.notes_panel.query.delete(0, "end")
             self.notes_panel.query.insert(0, rest)
             self.notes_panel.search()
+        elif command == "search":
+            self.show_research()
+            if rest:
+                self.research_panel.query.delete(0, "end")
+                self.research_panel.query.insert(0, rest)
+                self.research_panel.search()
         elif command == "always":
             self.always_allow(rest)
         elif command == "auto":
@@ -651,6 +667,7 @@ class Workbench(tk.Tk):
             self.transcript.note(f"unknown command {command!r}. /help for the list.")
 
     def always_allow(self, name: str) -> None:
+        self.show_assistant()
         tool = self.registry.get(name)
         if tool is None or not tool.mutating:
             self.transcript.note(
@@ -663,17 +680,21 @@ class Workbench(tk.Tk):
     # --- menu actions -----------------------------------------------------
 
     def show_help(self) -> None:
+        self.show_assistant()
         self.transcript.note(self.HELP)
 
     def show_history(self) -> None:
+        self.show_assistant()
         self.transcript.note(
             self.agent.narrate() if self.agent else "(no model session)"
         )
 
     def show_cost(self) -> None:
+        self.show_assistant()
         self.transcript.note(self.budget.render())
 
     def show_providers(self) -> None:
+        self.show_assistant()
         from polyrmc.agent.toolcall import describe_providers
 
         text = describe_providers()
@@ -684,6 +705,7 @@ class Workbench(tk.Tk):
     def show_log_tail(self, argument: str = "") -> None:
         from polyrmc.cli import _tail_log
 
+        self.show_assistant()
         self.transcript.note(_tail_log(self.log, argument))
 
     def open_log(self) -> None:
@@ -694,7 +716,7 @@ class Workbench(tk.Tk):
 
     def copy_transcript(self) -> None:
         self.clipboard_clear()
-        self.clipboard_append(self.transcript.plain())
+        self.clipboard_append(self.transcript.copy_text())
         self.transcript.note("transcript copied to the clipboard.")
 
     def sign_in(self) -> None:
@@ -729,6 +751,7 @@ class Workbench(tk.Tk):
         from polyrmc.intake import MissingDeclarations
 
         if self.bridge.busy:
+            self.show_assistant()
             self.transcript.note("a question is still running; wait for it to finish.")
             return
         chosen = OpenRunDialog.put(self, self.fonts, str(self.args.author or "researcher"))
@@ -741,11 +764,14 @@ class Workbench(tk.Tk):
         nominated.author = chosen["author"]
         nominated.run_id = None
         try:
-            self.session = open_session(nominated)
+            opened = open_session(nominated)
         except (MissingDeclarations, OSError, ValueError) as error:
             messagebox.showerror("Cannot open that run", str(error), parent=self)
             return
 
+        self.research_panel.context_changed()
+        self.session = opened
+        self.research_panel.refresh_context()
         self.args = nominated
         # Standing approvals do not survive a change of subject. "Always allow
         # emit_csv" is a coherent decision about the run in front of you and an
@@ -768,16 +794,51 @@ class Workbench(tk.Tk):
 
     # --- odds and ends ----------------------------------------------------
 
+    def _literature_context(self) -> dict:
+        from polyrmc.literature import experiment_context
+
+        return experiment_context(self.session.context)
+
+    def _review_papers(self, prompt: str) -> None:
+        """Send an explicit literature-review request through the usual agent."""
+        self.show_assistant()
+        if self.bridge.busy:
+            self.transcript.note("A question is still running. Finish or stop it before starting the review.")
+            return
+        self.entry.delete("1.0", "end")
+        self.entry.insert("1.0", prompt)
+        if self.agent is None or self.dead:
+            self.transcript.note("Your review question is ready. Connect a model in Model settings to review the sources.")
+            return
+        self._literature_review_text = ""
+        self.submit()
+
     def _call_tool(self, name: str, arguments: dict) -> str:
         """Run one read tool straight, with no model in the way."""
+        from polyrmc.agent.toolspec import ToolFailure
         from polyrmc.tools import Rejected
 
         try:
-            return self.registry[name].handler(self.session.context, arguments)
+            tool = self.registry[name]
+            if tool.tier != "read":
+                raise Rejected("Only read tools can run directly from a panel.")
+            return tool.handler(self.session.context, arguments)
+        except ToolFailure as error:
+            return error.content
         except Rejected as error:
             return str(error)
         except Exception as error:  # noqa: BLE001 - a panel is not worth a dead window
             return f"{type(error).__name__}: {error}"
+
+    def _save_research_idea(self, arguments: dict) -> None:
+        """The Save button records the researcher's draft without a model call."""
+        source = self.session.surface.state.source_file
+        run_id = None if source in (None, "", "none") else self.session.run_id
+        self.session.notes.add_research_idea(
+            **arguments, author=self.session.context.author, run_id=run_id,
+        )
+        self.state_panel.empty.set_library(self._past_run_count(), len(self.session.notes))
+        self.research_panel.refresh_context()
 
     def _render_state(self) -> str:
         from polyrmc.agent.toolspec import render_state
@@ -797,20 +858,22 @@ class Workbench(tk.Tk):
 
     def _refresh_header(self) -> None:
         source = Path(self.session.surface.state.source_file or "none").name
-        self.run_label.configure(text=f"{self.session.run_id}   ·   {source}")
+        self.run_label.configure(text=("Review literature. Keep your research ideas." if source == "none"
+                                       else f"{self.session.run_id}  /  {source}"))
         if self.provider is not None:
             brain = f"{self.provider.name} / {self.provider.model}"
         else:
             brain = "no model keyed"
-        approval = "auto-approve" if self.args.auto_approve else "commits need you"
+        approval = "auto-approve" if self.args.auto_approve else "changes need approval"
         self.model_label.configure(
-            text=f"{brain}   ·   {len(self.registry)} tools   ·   {approval}"
+            text=f"{brain}  ·  {approval}"
         )
-        self.title(f"PolyRMC — {self.session.run_id}")
+        self.title(f"{APP_NAME} — {self.session.run_id}")
 
     def _refresh_status(self) -> None:
-        self.spend_label.configure(text=self.budget.render("spent"))
-        self.log_label.configure(text=f"working notes: {self.log.location}")
+        spent = self.budget.spent
+        self.spend_label.configure(text=f"{spent.requests} model requests · {spent.total_tokens:,} tokens")
+        self.log_label.configure(text="Open session log ↗")
 
     def close(self) -> None:
         """Let go of the turn thread before the window goes.
@@ -821,6 +884,7 @@ class Workbench(tk.Tk):
         to end as a refusal, never as an approval nobody gave.
         """
         self.bridge.close()
+        self.research_panel.close()
         try:
             # Otherwise the next poll fires against a window that no longer
             # exists, and the last thing a clean exit prints is a Tk traceback.

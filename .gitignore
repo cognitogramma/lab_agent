@@ -4,6 +4,7 @@ filesystem-permissions.json
 __pycache__/
 *.pyc
 .pytest_cache/
+.test-tmp*/
 .venv/
 venv/
 *.egg-info/
@@ -28,6 +29,8 @@ data/plotting/*
 # data by the same standard as everything above, and this repo is public.
 data/memory/*
 !data/memory/.gitkeep
+# Saved papers include the experiment context used to find them.
+data/literature/
 # Session logs carry the whole conversation and every tool output, which is
 # lab data by the same standard as everything above. They are also the one
 # thing here that is safe to delete: nothing reads them back but a person.

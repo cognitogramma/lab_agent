@@ -36,6 +36,7 @@ worked.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
@@ -56,7 +57,7 @@ from polyrmc.agent.toolcall import (
     as_openai_tools,
     classify_provider_error,
 )
-from polyrmc.agent.toolspec import Tool, ToolContext, build_registry, schemas_for
+from polyrmc.agent.toolspec import Tool, ToolContext, ToolFailure, build_registry, schemas_for
 from polyrmc.tools import Rejected
 
 DEFAULT_MAX_STEPS = 12
@@ -66,6 +67,9 @@ Generous enough for a full run -- load, check, sweep, pick, emit, verify,
 extract, with reads in between -- and short enough that a model looping on a
 refusal it will not read gets stopped while the researcher is still watching.
 """
+
+NETWORK_TOOLS = frozenset({"search_internet", "read_web_page", "review_literature"})
+DEFAULT_MAX_WEB_CALLS = 8
 
 
 @dataclass
@@ -220,12 +224,17 @@ class Orchestrator:
         max_steps: int = DEFAULT_MAX_STEPS,
         budget: Budget | None = None,
         should_stop: StopFn | None = None,
+        max_web_calls: int = DEFAULT_MAX_WEB_CALLS,
     ) -> None:
         self.context = context
         self.provider = provider
         self.approvals = approvals or ApprovalPolicy()
         self.registry = registry or build_registry()
         self.max_steps = max_steps
+        if isinstance(max_web_calls, bool) or not isinstance(max_web_calls, int) or max_web_calls < 0:
+            raise ValueError("max_web_calls must be a non-negative integer")
+        self.max_web_calls = max_web_calls
+        self._web_calls_used = 0
         self.should_stop: StopFn = should_stop or (lambda: False)
         # The session runs on the researcher's own key. What it spent is part of
         # what it did, so it is tracked alongside the tool trace rather than
@@ -264,6 +273,7 @@ class Orchestrator:
         really changed, reported as though the session had never started.
         """
         self.messages.append(Message(role="user", text=user_text))
+        self._web_calls_used = 0
         turn_usage = Usage()
 
         for step in range(self.max_steps):
@@ -389,7 +399,21 @@ class Orchestrator:
             )
 
         try:
+            if call.name in NETWORK_TOOLS:
+                if self._web_calls_used >= self.max_web_calls:
+                    message = (
+                        f"Internet call limit reached ({self.max_web_calls} per question). "
+                        "No request was sent. Answer from sources already collected, or ask "
+                        "the researcher to continue with another question."
+                    )
+                    raise ToolFailure(message, json.dumps({"error": message, "code": "web_budget_exhausted"}))
+                self._web_calls_used += 1
             output = tool.handler(self.context, dict(call.arguments))
+        except ToolFailure as error:
+            return (
+                ToolResult(call.id, call.name, error.content, ok=False),
+                Event("error", f"{error}\n{error.content}", tool=call.name, call=call),
+            )
         except Rejected as error:
             return (
                 ToolResult(call.id, call.name, str(error), ok=False),
@@ -422,7 +446,7 @@ class Orchestrator:
             return "(no tools have been called this session)"
         lines = []
         for call, result in self.trace:
-            mark = "ok      " if result.ok else "refused "
+            mark = "ok      " if result.ok else ("failed  " if call.name in NETWORK_TOOLS else "refused ")
             lines.append(f"  {mark}{activity(call.name)}")
         return "\n".join(lines)
 

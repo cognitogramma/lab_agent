@@ -284,56 +284,8 @@ def test_a_closing_session_refuses_later_asks(context):
 
 
 @pytest.fixture(scope="session")
-def app(tmp_path_factory):
-    """One window for this whole file, or a skip where Tk cannot open.
-
-    One, not one per test, and it is the only Tk root any test here creates.
-    Tk will happily run several interpreters in a process and Tcl will not: it
-    re-searches for its own library on every root after the first, and on
-    Windows that search fails often enough that a root-per-test turned six
-    reliable tests into six that usually passed. Tests wanting an empty widget
-    tree take a :class:`~tkinter.Toplevel` off this one instead.
-
-    It is built with no provider keyed and a redirected project root, so nothing
-    it writes -- session log, notes, run history -- lands in the real tree.
-    """
-    tk = pytest.importorskip("tkinter")
-    from polyrmc import paths
-    from polyrmc.agent.toolcall import SPECS
-    from polyrmc.gui.app import Workbench
-
-    example = paths.example_config()
-    if not example.exists():
-        pytest.skip("no example configuration to scaffold a session from")
-
-    patch = pytest.MonkeyPatch()
-    patch.setenv(paths.ROOT_ENV, str(tmp_path_factory.mktemp("root")))
-    for spec in SPECS.values():
-        for key in spec.env_keys:
-            patch.delenv(key, raising=False)
-
-    try:
-        built = Workbench(gui_args(example, tmp_path_factory.mktemp("session")))
-    except tk.TclError as error:  # no display, or no Tk libraries
-        patch.undo()
-        pytest.skip(f"no display: {error}")
-    built.withdraw()
-    _settle(built)
-    yield built
-    built.close()
-    patch.undo()
-
-
-def gui_args(example, tmp_path):
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        config=str(example), raw=None, declarations=None, run_id="windowed",
-        channel=None, runs_dir=str(tmp_path / "runs"), notes_dir=str(tmp_path / "memory"),
-        out=None, author="tester", provider=None, model=None, max_steps=4,
-        auto_approve=False, budget_requests=0, budget_tokens=0,
-        min_request_interval=0.0, verbose=False, no_prompt=False, prompt=None,
-    )
+def app(gui_app):
+    return gui_app
 
 
 def _settle(built, seconds: float = 0.3) -> None:
@@ -695,6 +647,179 @@ def test_prose_without_markdown_is_left_alone(root):
     transcript.model(plain)
     root.update_idletasks()
     assert transcript.plain().strip() == plain
+
+
+def test_web_citations_are_clickable_but_active_schemes_are_plain_text(root):
+    from polyrmc.gui import theme
+    from polyrmc.gui.widgets import Transcript
+
+    transcript = Transcript(root, theme.apply(root))
+    transcript.model(
+        "Read [**the paper**](https://example.org/paper_(2026)) or "
+        "[unsafe](javascript:alert(1)). `Use [literal](https://example.org/code)`"
+    )
+    shown = transcript.plain()
+    assert "the paper" in shown and "**the paper**" not in shown
+    assert "[unsafe](javascript:alert(1))" in shown
+    assert "Use [literal](https://example.org/code)" in shown
+    link = "link:https://example.org/paper_(2026)"
+    assert transcript.text.tag_ranges(link)
+    assert transcript.text.tag_bind(link, "<Button-1>", None)
+    assert "the paper: https://example.org/paper_(2026)" in transcript.copy_text()
+    assert not any(name.startswith("link:javascript:") for name in transcript.text.tag_names())
+    transcript.clear()
+    assert link not in transcript.text.tag_names()
+
+
+def test_research_navigation_does_not_need_a_model_or_start_a_request(window):
+    window._slash("/search")
+    assert window.tabs.select() == str(window.research_panel)
+    assert window.research_panel.busy is False
+    assert "search_internet" in window.registry
+    assert window.registry["search_internet"].tier == "read"
+    assert window.registry["review_literature"].tier == "read"
+
+
+def test_literature_reader_keeps_a_structured_tool_failure(window, monkeypatch):
+    import json
+    from polyrmc.agent.toolspec import ToolFailure
+
+    def unavailable(_context, _arguments):
+        raise ToolFailure("Unsupported PDF", json.dumps({"error": "Open the original PDF to read it.",
+                                                        "code": "unsupported_content"}))
+
+    monkeypatch.setattr(window.registry["read_web_page"], "handler", unavailable)
+    payload = json.loads(window._call_tool("read_web_page", {"url": "https://example.org/paper.pdf"}))
+    assert payload["code"] == "unsupported_content"
+    assert "original PDF" in payload["error"]
+
+
+def test_literature_review_without_a_model_keeps_the_question_ready(window, monkeypatch):
+    monkeypatch.setattr(window, "agent", None)
+    requests = window.budget.spent.requests
+    window._review_papers("Compare this source with the current experiment and our earlier notes.")
+    assert "current experiment" in window.entry.get("1.0", "end-1c")
+    assert "Connect a model" in window.transcript.plain()
+    assert window.assistant_visible and not window.bridge.busy
+    assert window.budget.spent.requests == requests
+
+
+def test_completed_explicit_review_opens_in_the_large_reader(window, monkeypatch):
+    rendered = []
+    monkeypatch.setattr(window.research_panel, "show_review", rendered.append)
+    window._literature_review_text = "A comparison with [the source](https://example.org/paper)."
+    window._finish("ok")
+    assert rendered == ["A comparison with [the source](https://example.org/paper)."]
+    assert window.tabs.select() == str(window.research_panel)
+    assert window._literature_review_text is None and not window.assistant_visible
+
+
+def test_stopped_review_is_not_presented_as_a_finished_comparison(window, monkeypatch):
+    from polyrmc.agent.orchestrator import Event
+
+    rendered = []
+    monkeypatch.setattr(window.research_panel, "show_review", rendered.append)
+    window._literature_review_text = "I will read the sources next."
+    window._show_event(Event("stopped", text="Stopped before reading the sources."))
+    window._finish("ok")  # The bridge reports stop separately from its done signal.
+    assert not rendered
+
+
+def test_global_search_opens_research_with_the_requested_query(window, monkeypatch):
+    queries = []
+    monkeypatch.setattr(window.research_panel, "search", lambda: queries.append(window.research_panel.query.get()))
+    window.global_query.delete(0, "end")
+    window.global_query.insert(0, "polymer scattering")
+    assert window.search_global() == "break"
+    assert window.tabs.select() == str(window.research_panel)
+    assert queries == ["polymer scattering"]
+
+
+def test_menu_help_reveals_its_answer_in_the_assistant_drawer(window):
+    window.hide_assistant()
+    window.show_help()
+    assert window.assistant_visible
+    assert "/search" in window.transcript.plain()
+    window.hide_assistant()
+
+
+def test_navigation_shortcuts_preserve_the_question_draft(window, monkeypatch):
+    original = window.geometry()
+    opened = []
+    monkeypatch.setattr(window, "open_run", lambda: opened.append(True))
+    try:
+        window.deiconify()
+        window.show_assistant()
+        _settle(window)
+        window.entry.insert("1.0", "Keep this complete question.")
+        window.entry.mark_set("insert", "1.5")
+        window.entry.focus_force()
+        window.entry.event_generate("<Control-k>")
+        _settle(window)
+        assert window.tabs.select() == str(window.research_panel)
+        assert window.entry.get("1.0", "end-1c") == "Keep this complete question."
+        window.entry.focus_force()
+        window.entry.event_generate("<Control-o>")
+        _settle(window)
+        assert opened == [True]
+        assert window.entry.get("1.0", "end-1c") == "Keep this complete question."
+    finally:
+        window.hide_assistant()
+        window.geometry(original)
+        window.withdraw()
+
+
+def test_a_panel_cannot_bypass_the_commit_gate(window, monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("A panel called a commit handler")
+
+    monkeypatch.setattr(window.registry["pick_window"], "handler", forbidden)
+    result = window._call_tool("pick_window", {"window_length": 31})
+    assert "Only read tools" in result
+
+
+def test_workspace_has_full_width_until_the_assistant_is_opened(window):
+    original = window.geometry()
+    try:
+        window.deiconify()
+        window.geometry("1280x860")
+        window.hide_assistant()
+        _settle(window)
+        full_width = window.workspace.winfo_width()
+        assert full_width >= window.content.winfo_width() - 4
+        window.show_assistant()
+        _settle(window)
+        assert window.drawer.winfo_width() >= 380
+        assert window.workspace.winfo_width() < full_width - 350
+        window.hide_assistant()
+        _settle(window)
+        assert window.workspace.winfo_width() == full_width
+    finally:
+        window.geometry(original)
+        window.withdraw()
+
+
+def test_composer_and_navigation_fit_the_minimum_window(window):
+    original = window.geometry()
+    try:
+        window.deiconify()
+        window.geometry("1040x700")
+        window.show_assistant()
+        _settle(window)
+        assert window.entry.winfo_height() >= 40
+        assert window.ask_button.winfo_height() >= window.ask_button.winfo_reqheight()
+        search_right = window.find_sources_button.winfo_rootx() + window.find_sources_button.winfo_width()
+        assert search_right <= window.workspace.winfo_rootx() + window.workspace.winfo_width()
+        button_bottom = window.ask_button.winfo_rooty() + window.ask_button.winfo_height()
+        assert button_bottom <= window.winfo_rooty() + window.winfo_height()
+        window.navigation.buttons["research"].invoke()
+        _settle(window)
+        assert window.tabs.select() == str(window.research_panel)
+        assert window.navigation.selected == "research"
+    finally:
+        window.hide_assistant()
+        window.geometry(original)
+        window.withdraw()
 
 
 def _labels(widget) -> str:

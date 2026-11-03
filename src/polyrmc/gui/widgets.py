@@ -24,6 +24,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any, Callable, Sequence
 
+from polyrmc.gui.links import open_web_url, safe_web_url
 from polyrmc.gui.theme import PALETTE, Fonts
 
 # Indents, in pixels. The account of what happened sits under the prose it
@@ -49,11 +50,11 @@ _LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$")
 # reason; backticks are tried first because their content is verbatim and must
 # not be scanned for anything else at all.
 _INLINE = re.compile(
-    r"`([^`]+)`"
-    r"|\*\*(?=\S)(.+?)(?<=\S)\*\*"
-    r"|(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])"
+    r"`(?P<code>[^`]+)`"
+    r"|\[(?P<link_label>[^\]\n]+)\]\((?P<link_url>(?:[^()\s<>]|\([^()\s<>]*\))+)\)"
+    r"|\*\*(?=\S)(?P<strong>.+?)(?<=\S)\*\*"
+    r"|(?<![\w*])\*(?=\S)(?P<em>[^*\n]+?)(?<=\S)\*(?![\w*])"
 )
-_INLINE_TAGS = ("md_code", "md_strong", "md_em")
 
 
 def _inline(
@@ -75,15 +76,17 @@ def _inline(
     for found in _INLINE.finditer(text):
         if found.start() > cursor:
             chunks.append((text[cursor:found.start()], (block, *carried)))
-        for index, body in enumerate(found.groups()):
-            if body is None:
-                continue
-            tag = _INLINE_TAGS[index]
-            if tag == "md_code":
-                chunks.append((body, (block, *carried, tag)))
+        if found.group("code") is not None:
+            chunks.append((found.group("code"), (block, *carried, "md_code")))
+        elif found.group("link_label") is not None:
+            target = safe_web_url(found.group("link_url"))
+            if target:
+                chunks += _inline(found.group("link_label"), block, (*carried, "md_link", f"link:{target}"))
             else:
-                chunks += _inline(body, block, (*carried, tag))
-            break
+                chunks.append((found.group(0), (block, *carried)))
+        else:
+            name = "strong" if found.group("strong") is not None else "em"
+            chunks += _inline(found.group(name), block, (*carried, f"md_{name}"))
         cursor = found.end()
     if cursor < len(text):
         chunks.append((text[cursor:], (block, *carried)))
@@ -259,6 +262,7 @@ class Transcript(ttk.Frame):
         t.tag_configure("md_strong", font=fonts.bold)
         t.tag_configure("md_em", font=(fonts.body[0], fonts.body[1], "italic"))
         t.tag_configure("md_code", font=fonts.mono_small, foreground=p.accent)
+        t.tag_configure("md_link", foreground=p.accent, underline=True)
 
     def _margin_stripe(self, tag: str, colour: str) -> None:
         """Colour the left margin of a tag, where Tk is new enough to do it.
@@ -279,6 +283,13 @@ class Transcript(ttk.Frame):
         at_end = self.text.yview()[1] > 0.999
         self.text.configure(state="normal")
         for body, tags in chunks:
+            for tag in (tags,) if isinstance(tags, str) else tags:
+                if tag.startswith("link:") and tag not in self.text.tag_names():
+                    target = tag.removeprefix("link:")
+                    self.text.tag_configure(tag)
+                    self.text.tag_bind(tag, "<Button-1>", lambda _e, url=target: open_web_url(url))
+                    self.text.tag_bind(tag, "<Enter>", lambda _e: self.text.configure(cursor="hand2"))
+                    self.text.tag_bind(tag, "<Leave>", lambda _e: self.text.configure(cursor="arrow"))
             self.text.insert("end", body, tags)
         self.text.configure(state="disabled")
         # Only follow the conversation if the reader was already at the bottom.
@@ -300,7 +311,7 @@ class Transcript(ttk.Frame):
         of obeying it is the same mistake as printing call syntax at somebody.
 
         Deliberately partial. Headings, list items, ``**strong**``, ``*emphasis*``
-        and ``code`` are rendered; tables, links and LaTeX are left exactly as
+        and ``code`` plus web links are rendered; tables and LaTeX are left exactly as
         the model wrote them. Half-rendered maths would be worse than none:
         ``$M_w$`` at least says a symbol was meant, where a mangled attempt at
         one says something untrue about the measurement.
@@ -379,10 +390,30 @@ class Transcript(ttk.Frame):
     def clear(self) -> None:
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
+        for tag in self.text.tag_names():
+            if tag.startswith("link:"):
+                self.text.tag_delete(tag)
+        self.text.configure(cursor="arrow")
         self.text.configure(state="disabled")
 
     def plain(self) -> str:
         return self.text.get("1.0", "end-1c")
+
+    def copy_text(self) -> str:
+        """Keep source URLs when copying a conversation with rendered links."""
+        links = []
+        for tag in self.text.tag_names():
+            if not tag.startswith("link:"):
+                continue
+            ranges = self.text.tag_ranges(tag)
+            if ranges:
+                label = self.text.get(ranges[0], ranges[1])
+                position = tuple(map(int, str(ranges[0]).split(".")))
+                links.append((position, label, tag.removeprefix("link:")))
+        if not links:
+            return self.plain()
+        sources = "\n".join(f"- {label}: {url}" for _, label, url in sorted(links))
+        return self.plain().rstrip() + "\n\nSources:\n" + sources
 
 
 # Which state lines are asking for something, and which are only reporting.
@@ -402,10 +433,20 @@ class StatePanel(ttk.Frame):
     which of the two was describing their run.
     """
 
-    def __init__(self, parent, fonts: Fonts) -> None:
+    def __init__(self, parent, fonts: Fonts, on_open=None, on_research=None,
+                 on_runs=None, on_notes=None) -> None:
+        from polyrmc.gui.shell import HomePanel
+
         super().__init__(parent, style="Paper.TFrame")
         p = PALETTE
         self.fonts = fonts
+        self._details_requested = False
+        noop = lambda: None
+        self.empty = HomePanel(self, fonts, on_open or noop, on_research or noop,
+                               on_runs or noop, on_notes or noop)
+        self.empty.pack(fill="both", expand=True)
+        self.details_toggle = ttk.Button(self, text="View session details", style="Quiet.TButton", command=self._toggle_details)
+        self.details_toggle.pack(side="bottom", anchor="w", padx=24, pady=(8, 14))
         self.text, frame = _scrolled_text(
             self,
             wrap="word",
@@ -414,10 +455,10 @@ class StatePanel(ttk.Frame):
             font=fonts.small,
             borderwidth=0,
             highlightthickness=0,
-            padx=12,
-            pady=10,
-            spacing1=2,
-            spacing3=2,
+            padx=24,
+            pady=18,
+            spacing1=7,
+            spacing3=7,
             cursor="arrow",
             tabs=(VALUE_COLUMN,),
             # A modest requested width so the panel can be dragged narrow. Left
@@ -426,7 +467,7 @@ class StatePanel(ttk.Frame):
             # divider stuck.
             width=40,
         )
-        frame.pack(fill="both", expand=True)
+        self.details_frame = frame
         t = self.text
         # One number for the tab stop and the wrap indent, in pixels. They were
         # a tab stop in points and a margin in pixels, which is the same distance
@@ -440,6 +481,20 @@ class StatePanel(ttk.Frame):
         t.tag_configure("withheld", foreground=p.faint, font=fonts.mono_small)
         t.configure(state="disabled")
         self.show("(no run open)")
+
+    def _toggle_details(self) -> None:
+        self._details_requested = not self._details_requested
+        self._place_content()
+
+    def _place_content(self) -> None:
+        if self._details_requested or self._loaded:
+            self.empty.pack_forget()
+            self.details_frame.pack(fill="both", expand=True)
+            self.details_toggle.configure(text="Hide session details" if not self._loaded else "Run details")
+        else:
+            self.details_frame.pack_forget()
+            self.empty.pack(fill="both", expand=True)
+            self.details_toggle.configure(text="View session details")
 
     def show(self, rendered: str) -> None:
         p = PALETTE
@@ -464,6 +519,8 @@ class StatePanel(ttk.Frame):
             t.insert("end", value + "\n", ("row", style))
         t.configure(state="disabled")
         t.yview_moveto(yview)
+        self._loaded = "loaded: yes" in str(rendered)
+        self._place_content()
 
 
 class ToolsPanel(ttk.Frame):
@@ -551,20 +608,29 @@ class SearchPanel(ttk.Frame):
         self.query = ttk.Entry(bar, font=fonts.body)
         self.query.pack(side="left", fill="x", expand=True)
         self.query.bind("<Return>", lambda _e: self.search())
-        ttk.Button(bar, text="search", command=self.search, width=8).pack(
+        ttk.Button(bar, text="Search", command=self.search, width=8).pack(
             side="left", padx=(6, 0)
         )
-        ttk.Label(self, text=placeholder, style="Faint.TLabel").pack(
+        ttk.Button(bar, text="Clear", command=self.clear, width=6).pack(side="left", padx=(4, 0))
+        self.hint = ttk.Label(self, text=placeholder, style="Faint.TLabel", wraplength=360)
+        self.hint.pack(
             anchor="w", padx=10, pady=(0, 6)
         )
+        self.bind("<Configure>", lambda event: self.hint.configure(wraplength=max(160, event.width - 24)))
 
         self.out, frame = _scrolled_text(
             self, wrap="word", background=p.paper, foreground=p.ink,
-            font=fonts.mono_small, borderwidth=0, highlightthickness=0,
+            font=fonts.body, borderwidth=0, highlightthickness=0,
             padx=12, pady=8, cursor="arrow", width=40,
         )
         frame.pack(fill="both", expand=True)
         self.out.configure(state="disabled")
+        self.show("Search by keyword, or leave the query blank and choose Search to browse all records.")
+
+    def clear(self) -> None:
+        self.query.delete(0, "end")
+        self.show("Search by keyword, or leave the query blank and choose Search to browse all records.")
+        self.query.focus_set()
 
     def search(self) -> None:
         self.show(self.run(self.query.get().strip()))

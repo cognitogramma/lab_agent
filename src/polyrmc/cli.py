@@ -47,7 +47,7 @@ from polyrmc.intake import (
     render_question,
     to_config,
 )
-from polyrmc import paths
+from polyrmc import APP_NAME, paths
 from polyrmc.pipeline import new_run_id, run_part1, run_part2
 from polyrmc.provenance import summarize_loop
 from polyrmc.state import Declaration
@@ -621,7 +621,7 @@ def run_setup(args) -> int:
     interactive = sys.stdin.isatty() and not args.no_prompt
     env_path = paths.env_file()
 
-    print("\nPolyRMC needs a model provider. You supply the tokens.")
+    print(f"\n{APP_NAME} needs a model provider. You supply the tokens.")
     print(f"project root: {paths.project_root()}")
     print(f"keys are read from and written to: {env_path}\n")
 
@@ -1009,6 +1009,7 @@ def run_agent(args) -> int:
             approvals=policy,
             registry=registry,
             max_steps=args.max_steps,
+            max_web_calls=getattr(args, "max_web_calls", 8),
             budget=budget,
             should_stop=interrupts,
         )
@@ -1275,7 +1276,9 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):  # not a reconfigurable stream
             pass
 
-    parser = argparse.ArgumentParser(prog="polyrmc", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="continuum", description=f"{APP_NAME}\n\n{__doc__}"
+    )
     parser.add_argument(
         "stage",
         choices=[
@@ -1352,6 +1355,11 @@ def main(argv: list[str] | None = None) -> int:
         "and reports where it got to.",
     )
     parser.add_argument(
+        "--max-web-calls", type=int,
+        default=int(os.environ.get("POLYRMC_MAX_WEB_CALLS", "8")),
+        help="Internet tool calls allowed per question, including batched calls. Default 8; 0 disables agent web requests.",
+    )
+    parser.add_argument(
         "--auto-approve",
         action="store_true",
         help="Run commits without asking. Every one is still validated and "
@@ -1412,6 +1420,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Run the section 13 checks against the emitted CSV and fail on any.",
     )
     args = parser.parse_args(argv)
+    if args.max_web_calls < 0:
+        parser.error("--max-web-calls must be zero or a positive integer")
 
     if args.stage == "setup":
         return run_setup(args)

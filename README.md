@@ -1,14 +1,45 @@
-# PolyRMC Light-Scattering Processing Pipeline
+# Continuum Spectranalytics
+
+A research workspace built around **literature review and durable research
+ideas**, with the PolyRMC light-scattering pipeline as its measurement foundation.
+
+The research agent finds and reads sources, compares claims with prior lab
+work, identifies gaps, and keeps hypotheses and next steps in a searchable
+notebook. Its moat is the growing connection between reviewed literature,
+research ideas, and experimental evidence across sessions.
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[gui,search]"
+continuum gui
+```
+
+From this checkout on Windows, `./Start-Continuum.ps1` opens the desktop app
+using the local virtual environment.
+
+**Literature** searches public sources and keeps a saved reading list.
+**Ideas & notes** saves ideas locally, including evidence, source links, and a
+next step, and retrieves earlier work without needing a model key. In the
+assistant, `save_research_idea` and `read_research_ideas` use that same notebook.
+Ideas are labelled hypotheses rather than established findings.
+
+Connect a model in **Research assistant > Model settings** for AI literature
+synthesis and tool use. Search, reading-list storage, and manual idea capture
+work without a model key. Notebook records, saved papers, keys, and session
+logs are local and excluded from Git.
+
+The Python import package, existing `polyrmc` command, and `POLYRMC_*`
+configuration remain supported. The installed project is named
+`continuum-spectranalytics`, and `continuum` is the primary command.
 
 Agent access to local files can be configured in `filesystem-permissions.json`.
 See [filesystem access](docs/filesystem-access.md) for setup, exclusions, backups,
-and the GUI's **Session > File permissions...** command.
+and the GUI's **Menu > Session > File permissions...** command.
 
 An auditable analysis pipeline for automatic continuous dilution (ACD)
 light-scattering data, with subjective analysis decisions encoded as explicit,
 reviewable logic rather than left in an analyst's head.
 
-Tulane University · PolyRMC · Advisor: Prof. Wayne F. Reed
+Tulane University · Continuum Spectranalytics · Advisor: Prof. Wayne F. Reed
 
 Turns a raw ARGEN trace into weight-average molar mass, second virial
 coefficient A₂, and the diffusion interaction parameter k_D — recording, for
@@ -152,24 +183,146 @@ polyrmc gui
 The same session — same orchestrator, same tool surface, same log — with the
 run beside it instead of recalled on demand.
 
+The desktop has an ink-blue and copper research-studio design, a compact
+workspace rail, and independent workflow panels for data, reading, and memory.
+Source search sits in the workspace header and session status stays in a slim
+footer. **Lab assistant** opens a contextual drawer when needed. The rail opens
+Workbench, Literature, Visuals, Experiments, Notebook, and Toolbox. Research puts sources
+beside their preview on wide screens and stacks them at narrower widths.
+Times New Roman headings and body text use installed serif fallbacks.
+
+Install the desktop controls and web search (also included in `.[all]`):
+
+```powershell
+python -m pip install -e ".[gui,search]"
 ```
-+--------------------------------------------------------------------------+
-| state | figures | past runs | notes | tools |                            |
-|                                     |  the 2000 mM Gd run looks noisy     |
-|  run_id        session              |  above 0.6 h -- what window?        |
-|  loaded        no -- call load_run  |                                     |
-|  undeclared    technique,           |  The sweep put nine odd windows     |
-|                instrument, ...      |  inside the safe band. [...]        |
-|  smoothing     not chosen           |                                     |
-|  baseline      none, 0 candidate(s) |   . loading and cleaning the file   |
-|                                     |   . sweeping the smoothing windows  |
-|                                     |  +--------------------------------+ |
-|                                     |  | refused                        | |
-|                                     |  | Window 7 is not in the safe    | |
-|                                     |  | band. Safe band is [21, 25,    | |
-|                                     |  | 31, 37, 45, 51, 55, 61]. [...] | |
-|                                     |  +--------------------------------+ |
-+--------------------------------------------------------------------------+
+
+The presentation lives in `gui/theme.py`, `gui/layout.py`, and `gui/shell.py`,
+so later visual changes do not require changes to the measurement or search logic.
+
+Use **Open experiment** in the sidebar/header or **Model settings** inside the assistant.
+**Ctrl+J** shows or hides the assistant, **Ctrl+L** opens it and focuses the
+question box, **Ctrl+O** opens a run, and **Ctrl+K** focuses research. The
+**Menu** dropdown contains Session, View, and Help; **View > Reset workspace**
+closes the assistant. Session details remain available from the overview when
+no trace is loaded.
+
+### Internet research
+
+The **Literature** workspace is an experiment-aware reading desk. **Use experiment**
+fills an editable public research query from the declared experiment and flagged
+topics. **Find related papers** combines one web or arXiv search with matching
+lab notes, indexed experiments, and saved papers. The proposed query is visible;
+raw notes, file paths, and private run identifiers are not automatically sent to
+the search service. Changing a run refreshes the context without starting a search.
+
+**Found**, **Memory**, and **Saved** keep published-source candidates, local
+observations, and the reading list easy to browse. Each match explains its topic
+overlap. Relevance is a discovery aid, not proof that a source explains the current
+measurement. Local notes remain attributed lab observations; arXiv results remain
+preprints, and web search can also return pages other than papers.
+
+The reader uses large Times New Roman text, generous line spacing, adjustable
+type size, and a focus mode. **Read page** fetches available public text into the
+reader; **Open source** opens the original. Search summaries are labelled
+separately from extracted page text. PDFs, paywalled pages, and JavaScript-only
+sites may need the original page. **Save paper** keeps bounded citation metadata
+in `data/literature/reading-list.json`, a local, gitignored reading list reused
+in later searches. It does not save the full article.
+
+**Ask assistant to review** uses the configured model to compare sources with
+the experiment and memory, cite what it actually reads, and identify unresolved
+questions. It uses the normal agent budgets and approval gates. Discovery,
+reading, and saving work without a model key.
+
+The workspace searches the web or arXiv without spending a model request.
+Install general web search with the optional extra (included in `.[all]`):
+
+```powershell
+python -m pip install -e ".[search]"
+```
+
+Web search uses DDGS and needs no search API key. arXiv uses its public HTTPS
+API and works without that extra. Search terms go to the selected search
+service. The date filter applies to both sources; for arXiv it uses submission
+dates. An optional hostname, such as `nist.gov`, restricts web results to that
+domain and its subdomains. Web date filters are supplied by the search engines;
+check dates at the original source. The API enforces result limits, removes duplicate
+links and common tracking parameters, and reports connection or service errors.
+
+Select a result to inspect its summary, domain, available publication date,
+and authors when supplied. **Open source** opens the original page; **Copy
+citation** copies its title, available authors/date, and URL. Missing dates are
+shown as unknown. arXiv records are preprints, and a search summary does not
+verify a source's claims or peer-review status.
+
+Search runs in the background. **Cancel**, or **Escape** while Research is
+selected, ignores a pending search's results; a network request already sent
+finishes under its timeout. Cancelled and superseded results cannot replace
+the current search. arXiv requests are spaced by at least three seconds.
+
+The model can use the same read-only `search_internet` tool when asked for
+external references. Its sources also appear in Research, and Markdown source
+links in the conversation are clickable. External snippets are treated as
+untrusted source material. Searches cannot change a run or supply missing
+experimental declarations. `/search [query]` opens research in the GUI;
+without a query it focuses the search box without making a request.
+
+### The internet-enabled agent harness
+
+Internet access is part of the agent's tool set. `review_literature` combines
+experiment context, local memory, saved papers, and one internet search. In a
+conversation, the model can choose it or `search_internet`, inspect the results, call `read_web_page` on a
+source, follow relevant returned links, refine its search, and answer with
+citations. A supplied URL can be read directly. The existing orchestrator
+passes each result back to the model to choose its next action; it does not
+impose a search-and-read pipeline.
+
+For example, connect a model in **Lab assistant > Model settings**, then ask:
+
+> Find two public references on the second virial coefficient in light
+> scattering. Read the original sources, compare their explanations, and cite
+> the pages you used.
+
+The terminal uses the same harness and tools:
+
+```powershell
+polyrmc agent --max-web-calls 6 --budget-requests 8 --prompt "Find public references on light scattering, read the original sources, and cite the explanation."
+```
+
+Each question allows eight internet tool calls by default, including calls
+requested in one batch. Set `--max-web-calls` or `POLYRMC_MAX_WEB_CALLS` to change
+that allowance; zero disables the agent's internet requests. The manual Research
+panel is independent. Model request/token budgets and the Stop button still
+apply. A failed search or page read is a failed tool result, so the model can
+explain it or choose another source without ending the conversation.
+
+`read_web_page` retrieves public HTML, text, Markdown, and JSON. It returns
+bounded source text, resolved links, the final URL, retrieval time, a source
+hash, and whether text was truncated. Requests have a 15-second deadline,
+response-size limits, and redirect checks. Private/local addresses are rejected
+and connections use the validated public address. No browser login, cookies,
+JavaScript execution, form submission, or PDF extraction is performed.
+
+Page content remains untrusted evidence. It cannot authorize changes to an
+experiment or replace a researcher's declarations. Every scientific commit
+still uses the existing approval gate. A configured model provider is required
+for autonomous tool selection; the search and page-reading tools themselves do
+not require a model key.
+
+```
++------------------------------------------------------------------------+
+| Continuum Spectranalytics                     Research assistant Menu |
++---------------+--------------------------------------------------------+
+| Workspaces    |  Workbench                      [ Find sources ]      |
+| Workbench     |  Work with the evidence.                               |
+| Literature    |  Open an experiment                                    |
+| Visuals       |  Explore the literature                                |
+| Experiments   |  Revisit an experiment                                 |
+| Notebook      |                     Assistant drawer opens when needed |
++---------------+--------------------------------------------------------+
+| Current session                 Activity              Model and log   |
++------------------------------------------------------------------------+
 ```
 
 It exists for the figures. This pipeline draws them on every processed run —
@@ -198,7 +351,7 @@ calls did not run and why. Anything that had already completed stands. A stop
 leaves the run exactly where the step cap would: wherever the last completed
 tool left it.
 
-Beside that, two smaller things. The run state is permanently on screen,
+Beside that, two smaller things. The run state is available in Overview,
 rendered from the same `render_state` the model gets from `get_state`, so what
 you are looking at and what the agent is reasoning over are one text. And the
 commit gate is a dialog rather than a line in a stream — a prompt with three
@@ -208,12 +361,12 @@ answered by muscle memory.
 **The window adds no route.** There are no stage buttons, no wizard, no
 "Part 1 → Part 2" — because the model still decides what happens next, and a
 window is exactly where a fixed route would creep back in as a row of buttons
-that runs the stages in order. Of the 33 tools, the window invokes exactly two
-on its own, `search_past_runs` and `read_notes`, both `read` tier and neither
-able to change a run. All 8 compute and 9 commit tools are reached only by the
+that runs the stages in order. The window directly invokes `search_past_runs`,
+`read_notes`, and `search_internet` for its read-only panels; none can change a
+run. Compute and commit tools are reached only by the
 model choosing to call them, past the approval gate. That is asserted, not
 promised: `test_the_window_offers_no_route_of_its_own` fails the build if a
-panel ever runs anything else.
+panel directly invokes anything beyond the read tier.
 
 Nothing else is weakened either. It is one loop: commits go through the same
 `ApprovalPolicy`, refusals arrive whole, the cap holds, and the log under
@@ -225,7 +378,7 @@ nobody gave.
 Markdown in the model's reply is rendered rather than shown. A model writes
 `###` and `**` whatever you ask of it; a console cannot honour that, but a
 window has no excuse — displaying a formatting instruction instead of obeying it
-is the same mistake as printing call syntax. Tables, links and LaTeX are left
+is the same mistake as printing call syntax. Web links are clickable; tables and LaTeX are left
 verbatim, and underscores are never emphasis, because this lab writes
 `c0_g_per_cm3` in ordinary prose and a key italicised through the middle is a
 key nobody can search for.
@@ -478,7 +631,7 @@ offline path either way, and it is what every test runs.
 .venv\Scripts\python.exe -m pytest
 ```
 
-497 tests, no API key or instrument file required. The agent loop is exercised
+The regression suite needs no API key or instrument file. The agent loop is exercised
 end to end against a scripted provider, including the paths that matter most:
 a tool that rejects, a commit the researcher declines, a handler that raises,
 and the step cap holding.

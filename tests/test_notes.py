@@ -64,3 +64,85 @@ def test_notes_are_kept_apart_from_run_provenance(tmp_path: Path):
 
     assert book.path.name == "notes.json"
     assert not list(tmp_path.glob("*.provenance.json"))
+
+
+def test_research_idea_survives_restart_with_evidence_and_next_step(tmp_path: Path):
+    book = NoteBook(tmp_path)
+    book.add("BSA observation", "A measured observation.", author="tester")
+    book.add_research_idea(
+        "Salt-dependent aggregation", "Salt may shift the aggregation threshold.", "Arnold",
+        evidence="A question prompted by the cited source; not a measured result.",
+        source_urls=["https://example.org/paper", "https://example.org/paper"],
+        next_step="Compare a salt concentration series.", tags=["BSA"],
+    )
+
+    reopened = NoteBook(tmp_path)
+    ideas = reopened.research_ideas()
+    assert len(ideas) == 1
+    idea = ideas[0]
+    assert idea.author == "Arnold"
+    assert idea.run_id is None
+    assert "unverified hypothesis" in idea.body
+    assert "Salt may shift" in idea.body
+    assert "not a measured result" in idea.body
+    assert idea.body.count("https://example.org/paper") == 1
+    assert "Next step: Compare a salt concentration series." in idea.body
+    assert reopened.research_ideas("concentration series") == [idea]
+    assert reopened.search(query="aggregation") == [idea]
+    assert len(reopened.notes) == 2
+
+
+def test_an_empty_idea_is_not_saved(tmp_path: Path):
+    book = NoteBook(tmp_path)
+    with pytest.raises(ValueError, match="idea or hypothesis"):
+        book.add_research_idea("Title", "   ", "Arnold")
+    assert len(NoteBook(tmp_path)) == 0
+
+
+def test_a_failed_idea_save_does_not_remain_in_memory(tmp_path: Path, monkeypatch):
+    book = NoteBook(tmp_path)
+    book.add("Existing note", "Keep this.", "Arnold")
+
+    def fail_save():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(book, "save", fail_save)
+    with pytest.raises(OSError, match="disk full"):
+        book.add_research_idea("Unsaved", "A new hypothesis.", "Arnold")
+    assert len(book) == 1
+    assert len(NoteBook(tmp_path)) == 1
+    assert not book.research_ideas()
+
+
+@pytest.mark.parametrize("failure", ["partial_write", "replace"])
+def test_failed_persistence_preserves_prior_ideas(tmp_path: Path, monkeypatch, failure):
+    from polyrmc.memory import notes as notes_module
+
+    book = NoteBook(tmp_path)
+    book.add_research_idea("Prior idea", "An existing hypothesis.", "Arnold")
+    original = book.path.read_bytes()
+
+    with monkeypatch.context() as patch:
+        if failure == "partial_write":
+            def partial_write(_value, stream, **_kwargs):
+                stream.write('[{"subject": "partially written')
+                stream.flush()
+                raise OSError("interrupted write")
+
+            patch.setattr(notes_module.json, "dump", partial_write)
+        else:
+            def failed_replace(_source, _target):
+                raise OSError("replacement refused")
+
+            patch.setattr(Path, "replace", failed_replace)
+
+        with pytest.raises(OSError):
+            book.add_research_idea("Unsaved idea", "A second hypothesis.", "Arnold")
+
+    assert book.path.read_bytes() == original
+    assert [idea.subject for idea in NoteBook(tmp_path).research_ideas()] == ["Prior idea"]
+    assert [idea.subject for idea in book.research_ideas()] == ["Prior idea"]
+    assert not list(tmp_path.glob(".notes.json.*.tmp"))
+
+    book.add_research_idea("Later idea", "Saving works after the failure.", "Arnold")
+    assert len(NoteBook(tmp_path).research_ideas()) == 2

@@ -97,6 +97,27 @@ def test_the_model_calls_a_tool_and_answers_from_its_result(context):
     assert events[2].text == "The run is not loaded yet."
 
 
+def test_research_ideas_save_and_retrieve_without_loading_an_experiment(context):
+    assert context.surface.state.raw_signal is None
+    agent = agent_over(context, [
+        call("save_research_idea", title="Salt and aggregation", idea="Test salt-dependent aggregation.",
+             evidence="A proposed comparison, not a measurement.", next_step="Read the related papers."),
+        AssistantTurn(text="Saved the hypothesis and next reading task."),
+    ])
+    agent.ask("Remember this research idea")
+    assert agent.trace[0][1].ok
+    assert len(context.notes) == 1
+
+    context.notes = NoteBook(context.notes.directory)
+    later = agent_over(context, [call("read_research_ideas", query="salt"), AssistantTurn(text="Found your idea.")])
+    events = later.ask("What was my salt idea?")
+    result = next(e for e in events if e.kind == "result")
+    assert "Salt and aggregation" in result.text
+    assert "unverified hypothesis" in result.text
+    assert "Read the related papers" in result.text
+    assert context.surface.state.raw_signal is None
+
+
 def test_the_tool_result_is_fed_back_to_the_model(context):
     provider = ScriptedProvider([call("get_state"), AssistantTurn(text="done")])
     agent = Orchestrator(context=context, provider=provider, approvals=ApprovalPolicy(ask=allow_all))
