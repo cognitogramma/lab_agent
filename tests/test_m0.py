@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.pipeline import run_part1
-from polyrmc.tier0.m0 import select_m0
+from continuum_spectranalytics.pipeline import run_part1
+from continuum_spectranalytics.tier0.m0 import select_m0
 
 RNG = np.random.default_rng(11)
 NOISE = 0.002

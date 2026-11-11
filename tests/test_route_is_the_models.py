@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.agent.orchestrator import ApprovalPolicy, Orchestrator, allow_all, deny_all
-from polyrmc.agent.toolcall import AssistantTurn, ScriptedProvider, ToolCall
-from polyrmc.agent.toolspec import ToolContext, build_registry
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics.agent.orchestrator import ApprovalPolicy, Orchestrator, allow_all, deny_all
+from continuum_spectranalytics.agent.toolcall import AssistantTurn, ScriptedProvider, ToolCall
+from continuum_spectranalytics.agent.toolspec import ToolContext, build_registry
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 
 def call(*names_and_args) -> AssistantTurn:

@@ -1,7 +1,7 @@
 """Reading KaleidaGraph .QDA files.
 
 The fixtures here are written by :func:`build_qda`, which lays out the format
-exactly as :mod:`polyrmc.kaleidagraph` documents it. That keeps the suite off
+exactly as :mod:`continuum_spectranalytics.kaleidagraph` documents it. That keeps the suite off
 the lab's real files, and it means the writer and the reader have to agree about
 a format neither of them owns -- if the description in the module docstring is
 wrong, these tests are wrong in the same way and the disagreement shows up the
@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.kaleidagraph import (
+from continuum_spectranalytics.kaleidagraph import (
     COLUMN_RECORD_SIGNATURE,
     COLUMN_RECORD_SIZE,
     NotAQdaFile,
@@ -23,7 +23,7 @@ from polyrmc.kaleidagraph import (
     read_qda,
     read_qpc,
 )
-from polyrmc.tabular import UnsupportedFile, open_table
+from continuum_spectranalytics.tabular import UnsupportedFile, open_table
 
 
 def build_qda(

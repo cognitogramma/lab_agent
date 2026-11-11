@@ -1,4 +1,4 @@
-"""Build the setup guide as a PDF, for standing up PolyRMC on a new machine.
+"""Build the setup guide as a PDF, for standing up Continuum Spectranalytics on a new machine.
 
 Written on the assumption that the repository is the only thing the reader has:
 no Python yet, no virtual environment, no data, and nobody sitting next to them.
@@ -33,12 +33,12 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "src"))
 
 from build_architecture_pdf import CSS, render  # noqa: E402
-from polyrmc import paths  # noqa: E402
+from continuum_spectranalytics import paths  # noqa: E402
 
 
 def document() -> str:
     return """
-<h1>PolyRMC &mdash; setting up a new machine</h1>
+<h1>Continuum Spectranalytics &mdash; setting up a new machine</h1>
 <p class="sub">From a computer with nothing on it to a working installation,
 assuming this repository is all you have.</p>
 
@@ -65,12 +65,12 @@ python.org installer is the easier one to support.</p>
 <h2>2. Put the code somewhere</h2>
 
 <p>Copy or clone the repository to a path <b>without spaces or OneDrive in
-it</b>. <code>C:\\lab\\polyrmc</code> is a good choice;
+it</b>. <code>C:\\lab\\continuum-spectranalytics</code> is a good choice;
 <code>C:\\Users\\you\\OneDrive\\My Documents\\</code> is not &mdash; OneDrive
 syncs files out from under a running process, and spaces make every later
 command need quoting.</p>
 
-<pre>cd C:\\lab\\polyrmc
+<pre>cd C:\\lab\\continuum-spectranalytics
 dir</pre>
 
 <p>You should see <code>pyproject.toml</code>, <code>src</code>,
@@ -117,7 +117,7 @@ minutes, mostly rendering real figures.</p>
 
 <p>Then check the command itself responds:</p>
 
-<pre>.\\.venv\\Scripts\\python.exe -m polyrmc.cli plot</pre>
+<pre>.\\.venv\\Scripts\\python.exe -m continuum_spectranalytics.cli plot</pre>
 
 <p>It should answer <code>plot needs --file &lt;path&gt;</code>. A readable
 sentence rather than a traceback means the entry point is wired up.</p>
@@ -135,7 +135,7 @@ of your own.</p>
 <p>Point it at any data file with no other arguments and it describes what is
 inside:</p>
 
-<pre>.\\.venv\\Scripts\\python.exe -m polyrmc.cli plot --file "D:\\data\\run.txt"</pre>
+<pre>.\\.venv\\Scripts\\python.exe -m continuum_spectranalytics.cli plot --file "D:\\data\\run.txt"</pre>
 
 <p>It reads ARGEN acquisitions, KaleidaGraph <code>.QDA</code> files, processed
 CSVs this pipeline wrote, and ordinary delimited exports. It reports which kind
@@ -144,7 +144,7 @@ guess at the format.</p>
 
 <p>Then draw something:</p>
 
-<pre>.\\.venv\\Scripts\\python.exe -m polyrmc.cli plot `
+<pre>.\\.venv\\Scripts\\python.exe -m continuum_spectranalytics.cli plot `
     --file "D:\\data\\run.txt" --x seconds --y ls8</pre>
 
 <p>The PNG lands beside the data file. <code>--out</code> puts it elsewhere,
@@ -163,16 +163,16 @@ actually buy tokens from &mdash; there is no reason to install one for a vendor
 you will never key:</p>
 
 <pre>.\\.venv\\Scripts\\python.exe -m pip install -e ".[gemini]"
-.\\.venv\\Scripts\\python.exe -m polyrmc.cli setup</pre>
+.\\.venv\\Scripts\\python.exe -m continuum_spectranalytics.cli setup</pre>
 
 <p>Substitute <code>[claude]</code>, <code>[openai]</code>, or <code>[all]</code>.
-<code>polyrmc setup</code> lists the providers, shows which are keyed, gives you
+<code>continuum-spectranalytics setup</code> lists the providers, shows which are keyed, gives you
 the URL to buy a key, and spends one tiny call confirming the key works &mdash;
 better to learn that now than three questions into a session. The key is stored
 in <code>.env</code> at the project root, which is gitignored; setup prints the
 exact path.</p>
 
-<table>
+<table style="page-break-before: always;">
 <tr><th>Provider</th><th>Environment variable</th><th>Where to buy</th></tr>
 <tr><td>gemini</td><td><code>GEMINI_API_KEY</code> or
 <code>GOOGLE_API_KEY</code></td><td>aistudio.google.com/apikey</td></tr>
@@ -185,7 +185,7 @@ exact path.</p>
 <p class="warn">These are <b>API keys, billed per token</b>. A ChatGPT Plus or
 Claude Pro subscription is a separate product and does not grant API access.</p>
 
-<pre>.\\.venv\\Scripts\\python.exe -m polyrmc.cli agent</pre>
+<pre>.\\.venv\\Scripts\\python.exe -m continuum_spectranalytics.cli agent</pre>
 
 <p>Every turn prints what it spent; <code>/cost</code> gives the session total.
 Anything that would <b>change</b> a run stops and asks you first. Reading and
@@ -201,7 +201,7 @@ will still find the run history and your saved key.</p>
 
 <p>To keep data somewhere else entirely, on a data drive or a share:</p>
 
-<pre>$env:POLYRMC_ROOT = "D:\\lab\\polyrmc-data"</pre>
+<pre>$env:CONTINUUM_SPECTRANALYTICS_ROOT = "D:\\lab\\continuum-spectranalytics-data"</pre>
 
 <p>Set it in the same terminal before running, or add it to the machine's
 environment variables to make it permanent.</p>
@@ -232,7 +232,7 @@ still fails, re-run the installer and choose Modify.</td></tr>
 <tr><td><code>python</code> is not recognised</td><td>Expected. Use
 <code>.\\.venv\\Scripts\\python.exe</code>, not a bare
 <code>python</code>.</td></tr>
-<tr><td><code>No module named polyrmc</code></td><td>The install in section 3
+<tr><td><code>No module named continuum_spectranalytics</code></td><td>The install in section 3
 did not run, or ran against a different environment. Re-run it from the folder
 containing <code>pyproject.toml</code>.</td></tr>
 <tr><td>Running scripts is disabled on this system</td><td>You tried to activate
@@ -251,14 +251,14 @@ skipped.</td></tr>
 KaleidaGraph writes <code>.QDA</code> for data and <code>.QPC</code> for a
 graph; they mean one of those.</td></tr>
 <tr><td>A provider failed</td><td>The message names the category. Out of quota is
-a billing matter; a rejected key wants <code>polyrmc setup</code>; a stale model
+a billing matter; a rejected key wants <code>continuum-spectranalytics setup</code>; a stale model
 id wants <code>--model</code>. It will not quietly fail over onto another of your
 keys, because that is your money.</td></tr>
 </table>
 
 <h2>What to read next</h2>
 
-<p><b><code>docs/polyrmc-architecture.pdf</code></b> &mdash; what the system is,
+<p><b><code>docs/continuum-spectranalytics-architecture.pdf</code></b> &mdash; what the system is,
 what each tier may and may not do, the reverse-engineered KaleidaGraph formats,
 and the known gaps.</p>
 
@@ -274,7 +274,7 @@ they describe. After changing anything they cover, rebuild:</p>
 
 
 def main() -> int:
-    out_path = paths.project_root() / "docs" / "polyrmc-setup.pdf"
+    out_path = paths.project_root() / "docs" / "continuum-spectranalytics-setup.pdf"
     pages = render(document(), out_path)
     print(f"wrote {paths.relative_to_root(out_path)} ({pages} pages)")
     return 0

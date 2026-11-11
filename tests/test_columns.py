@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.tier0.columns import (
+from continuum_spectranalytics.tier0.columns import (
     concentration_column,
     mw_over_m0_column,
     rayleigh_column,

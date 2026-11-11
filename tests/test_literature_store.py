@@ -7,8 +7,8 @@ import socket
 
 import pytest
 
-from polyrmc import literature_store as store
-from polyrmc.literature_store import ReadingLibrary, ReadingLibraryError
+from continuum_spectranalytics import literature_store as store
+from continuum_spectranalytics.literature_store import ReadingLibrary, ReadingLibraryError
 
 
 @pytest.fixture(autouse=True)

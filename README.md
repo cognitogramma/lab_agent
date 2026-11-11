@@ -1,20 +1,24 @@
 # Continuum Spectranalytics
 
-A research workspace built around **literature review and durable research
-ideas**, with the PolyRMC light-scattering pipeline as its measurement foundation.
+A research workspace for **literature review and durable research ideas**, with
+an auditable light-scattering pipeline for experimental data.
 
 The research agent finds and reads sources, compares claims with prior lab
 work, identifies gaps, and keeps hypotheses and next steps in a searchable
 notebook. Its moat is the growing connection between reviewed literature,
 research ideas, and experimental evidence across sessions.
 
-```powershell
-.venv\Scripts\python.exe -m pip install -e ".[gui,search]"
-continuum gui
-```
+## Download for Windows
 
-From this checkout on Windows, `./Start-Continuum.ps1` opens the desktop app
-using the local virtual environment.
+1. On a 64-bit Windows PC, download `Continuum-Spectranalytics.exe` from the
+   **Assets** section of the [v0.2.0 GitHub release](https://github.com/cognitogramma/lab_agent/releases/tag/v0.2.0).
+2. Double-click the downloaded file in File Explorer. The standalone app
+   includes Python and its dependencies.
+
+The executable is unsigned. If Windows blocks it on a Tulane-managed computer,
+contact Tulane IT for help. The app stores settings, ideas, the reading list,
+subagent definitions, and run data under
+`%LOCALAPPDATA%\Continuum Spectranalytics`.
 
 **Literature** searches public sources and keeps a saved reading list.
 **Ideas & notes** saves ideas locally, including evidence, source links, and a
@@ -22,14 +26,52 @@ next step, and retrieves earlier work without needing a model key. In the
 assistant, `save_research_idea` and `read_research_ideas` use that same notebook.
 Ideas are labelled hypotheses rather than established findings.
 
-Connect a model in **Research assistant > Model settings** for AI literature
-synthesis and tool use. Search, reading-list storage, and manual idea capture
-work without a model key. Notebook records, saved papers, keys, and session
-logs are local and excluded from Git.
+For optional AI features, open **Research assistant > Model settings**. Choose
+Gemini, Claude, or OpenAI, enter your provider API key, and select **Use this
+key**. Provider usage charges may apply. Search, reading-list storage, and
+manual idea capture work without a model key. Notebook records, saved papers,
+keys, and session logs are local and excluded from Git.
 
-The Python import package, existing `polyrmc` command, and `POLYRMC_*`
-configuration remain supported. The installed project is named
-`continuum-spectranalytics`, and `continuum` is the primary command.
+From source, the Python package is `continuum_spectranalytics` and the command
+is `continuum-spectranalytics`. `CONTINUUM_SPECTRANALYTICS_ROOT` can point the
+app at an existing workspace. Legacy `POLYRMC_*` settings still load.
+
+## Specialized subagents
+
+With a model connected, ask the **Research assistant** to build a specialist.
+For example, “Create a literature subagent called Citation Reviewer. Have it
+compare reported methods and cite a source for each finding.” Review the proposed
+instructions and approve the save. Ask “List my subagents” to see saved roles or
+“Ask Citation Reviewer to compare light-scattering methods in recent papers” to
+delegate a task. The terminal `continuum-spectranalytics agent` also accepts
+these requests.
+
+Choose a scope when creating a specialist.
+
+| Scope | What the specialist can use |
+| --- | --- |
+| `general` | The text supplied with its task |
+| `literature` | Public source search and page reading |
+| `run_review` | Read-only access to the current run, run history, and notes |
+
+Saved roles are available across sessions. A subagent uses the current model
+provider and shares the parent turn's budget and stop controls. It returns a
+report to the Research assistant for review.
+
+## Build the Windows app
+
+Use a Windows x64 Python installation with Tcl/Tk. From the checkout, run
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[windows-build]"
+.\Build-Continuum-Spectranalytics.ps1
+```
+
+The build produces `dist\Continuum Spectranalytics.exe`. It bundles the default
+lab context and agent prompts. User settings, credentials, and research data
+are stored separately. For source development, run
+`continuum-spectranalytics gui` or `./Start-Continuum-Spectranalytics.ps1`.
 
 Agent access to local files can be configured in `filesystem-permissions.json`.
 See [filesystem access](docs/filesystem-access.md) for setup, exclusions, backups,
@@ -93,9 +135,9 @@ having done is rendered from the calls it actually made, so its account cannot
 drift from its behaviour.
 
 ```
-polyrmc agent                                    # a session; ask about past work
-polyrmc agent --raw <file>                       # a session over a nominated run
-polyrmc gui --raw <file>                         # the same session, in a window
+continuum-spectranalytics agent                                    # a session; ask about past work
+continuum-spectranalytics agent --raw <file>                       # a session over a nominated run
+continuum-spectranalytics gui --raw <file>                         # the same session, in a window
 ```
 
 ## Opening a run, and what you have to declare
@@ -136,7 +178,7 @@ third in Mw, and the two traces look identical. An invented constant produces a
 number that is wrong and completely plausible, which is the one failure this
 pipeline exists to prevent.
 
-`polyrmc intake` still exists and still writes a declarations file. It is now a
+`continuum-spectranalytics intake` still exists and still writes a declarations file. It is now a
 convenience — answer everything up front, once, for a run you already
 understand — rather than a gate you have to pass to begin.
 
@@ -177,7 +219,7 @@ looking.
 ## The window
 
 ```bash
-polyrmc gui
+continuum-spectranalytics gui
 ```
 
 The same session — same orchestrator, same tool surface, same log — with the
@@ -287,11 +329,11 @@ For example, connect a model in **Lab assistant > Model settings**, then ask:
 The terminal uses the same harness and tools:
 
 ```powershell
-polyrmc agent --max-web-calls 6 --budget-requests 8 --prompt "Find public references on light scattering, read the original sources, and cite the explanation."
+continuum-spectranalytics agent --max-web-calls 6 --budget-requests 8 --prompt "Find public references on light scattering, read the original sources, and cite the explanation."
 ```
 
 Each question allows eight internet tool calls by default, including calls
-requested in one batch. Set `--max-web-calls` or `POLYRMC_MAX_WEB_CALLS` to change
+requested in one batch. Set `--max-web-calls` or `CONTINUUM_SPECTRANALYTICS_MAX_WEB_CALLS` to change
 that allowance; zero disables the agent's internet requests. The manual Research
 panel is independent. Model request/token budgets and the Stop button still
 apply. A failed search or page read is a failed tool result, so the model can
@@ -385,7 +427,7 @@ key nobody can search for.
 
 The window costs no new dependency: Tk ships with CPython, and matplotlib is
 already on the measurement path. On Linux, Tk is sometimes a separate package
-(`python3-tk`); without it, `polyrmc gui` says so and names `polyrmc agent`,
+(`python3-tk`); without it, `continuum-spectranalytics gui` says so and names `continuum-spectranalytics agent`,
 which does everything the window does apart from showing you the picture.
 
 ## Bring your own tokens
@@ -479,8 +521,8 @@ cost far less than one long one.
 Ceilings, checked *before* each call rather than reported after:
 
 ```bash
---budget-requests 20     # or POLYRMC_BUDGET_REQUESTS
---budget-tokens 200000   # or POLYRMC_BUDGET_TOKENS
+--budget-requests 20     # or CONTINUUM_SPECTRANALYTICS_BUDGET_REQUESTS
+--budget-tokens 200000   # or CONTINUUM_SPECTRANALYTICS_BUDGET_TOKENS
 ```
 
 ### The limit you will hit first is per *minute*
@@ -499,7 +541,7 @@ was *refused*, not served, so there are no tokens to pay for twice.
 Cheaper than being refused is not asking too fast in the first place:
 
 ```bash
---min-request-interval 13    # or POLYRMC_MIN_REQUEST_INTERVAL; paces a 5/min limit
+--min-request-interval 13    # or CONTINUUM_SPECTRANALYTICS_MIN_REQUEST_INTERVAL; paces a 5/min limit
 ```
 
 Two more things follow from the per-model daily cap. A full end-to-end session
@@ -509,7 +551,7 @@ and `--model` moves you onto a different allowance. And prompting the model to
 flagged regions one at a time it spends seven requests, asked to decide them
 together it spends one.
 
-Cost in currency is opt-in — set `POLYRMC_RATES="in=0.30,out=2.50"` (per million
+Cost in currency is opt-in — set `CONTINUUM_SPECTRANALYTICS_RATES="in=0.30,out=2.50"` (per million
 tokens, from your provider's current pricing). Token counts are measured and are
 always right. A price hardcoded here would be a claim about a vendor's pricing
 page on one particular day: wrong within a quarter, and believed anyway.
@@ -532,7 +574,7 @@ carries an author, for the same reason every declaration does.
 ## Layout
 
 ```
-src/polyrmc/
+src/continuum_spectranalytics/
   config.py       run configuration and physical constants (pydantic)
   state.py        typed state: arrays, anomalies, splice, loops, provenance
   io_csv.py       the six-column CSV that is the only Part 1 → Part 2 interface
@@ -586,10 +628,10 @@ only for the provider you actually buy tokens from:
 
 ```bash
 .venv\Scripts\python.exe -m pip install -e ".[gemini]"   # or [claude], [openai], [all]
-.venv\Scripts\python.exe -m polyrmc.cli setup            # take a key, check it works
+.venv\Scripts\python.exe -m continuum_spectranalytics.cli setup            # take a key, check it works
 ```
 
-`polyrmc setup` is the first thing to run if you want the agent, and the last
+`continuum-spectranalytics setup` is the first thing to run if you want the agent, and the last
 thing you need if you do not: `intake`, `process`, `plot` and `--judge static`
 run end to end with no key at all.
 
@@ -597,9 +639,9 @@ Three documents, depending on where you are starting:
 
 | | |
 |---|---|
-| [docs/polyrmc-setup.pdf](docs/polyrmc-setup.pdf) | A new machine with no Python on it, assuming this repository is all you have. Covers the offline case. |
+| [docs/continuum-spectranalytics-setup.pdf](docs/continuum-spectranalytics-setup.pdf) | A new machine with no Python on it, assuming this repository is all you have. Covers the offline case. |
 | [docs/LAB-SETUP.md](docs/LAB-SETUP.md) | Day-to-day use from a working checkout. |
-| [docs/polyrmc-architecture.pdf](docs/polyrmc-architecture.pdf) | What the system is, what each tier may not do, the KaleidaGraph formats, and the known gaps. |
+| [docs/continuum-spectranalytics-architecture.pdf](docs/continuum-spectranalytics-architecture.pdf) | What the system is, what each tier may not do, the KaleidaGraph formats, and the known gaps. |
 
 Note there is **no sample data in this repository** — everything under `data/`
 is lab data and excluded. `pytest` is how you verify an install; it writes its
@@ -608,10 +650,10 @@ own synthetic acquisitions.
 ## Run
 
 ```bash
-.venv\Scripts\python.exe -m polyrmc.cli agent
-.venv\Scripts\python.exe -m polyrmc.cli gui
-.venv\Scripts\python.exe -m polyrmc.cli run --config examples/run_config.example.json
-.venv\Scripts\python.exe -m polyrmc.cli plot --file <any data file>
+.venv\Scripts\python.exe -m continuum_spectranalytics.cli agent
+.venv\Scripts\python.exe -m continuum_spectranalytics.cli gui
+.venv\Scripts\python.exe -m continuum_spectranalytics.cli run --config examples/run_config.example.json
+.venv\Scripts\python.exe -m continuum_spectranalytics.cli plot --file <any data file>
 ```
 
 `plot` opens a file and tells you what is in it — ARGEN acquisitions,

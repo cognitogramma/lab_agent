@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.agent.toolspec import ToolContext, build_registry
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import RunState
-from polyrmc.tools import Rejected, ToolSurface
+from continuum_spectranalytics.agent.toolspec import ToolContext, build_registry
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import RunState
+from continuum_spectranalytics.tools import Rejected, ToolSurface
 from tests.test_rehydrate import write_run
 
 import json

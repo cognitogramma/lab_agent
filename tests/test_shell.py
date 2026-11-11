@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.gui.shell import HomePanel, LibraryRail
+from continuum_spectranalytics.gui.shell import HomePanel, LibraryRail
 
 
 @pytest.fixture
 def shell_factory(gui_app):
-    from polyrmc.gui.theme import build_fonts
+    from continuum_spectranalytics.gui.theme import build_fonts
 
     created = []
     fonts = build_fonts(gui_app)

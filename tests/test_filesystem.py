@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from polyrmc.filesystem import FileAccess, FilePolicy, MAX_READ_BYTES, MAX_WRITE_BYTES
-from polyrmc.tools import Rejected, ToolSurface
-from polyrmc.agent.toolspec import ToolContext, build_registry
-from polyrmc.agent.orchestrator import ApprovalPolicy, Orchestrator, allow_all
-from polyrmc.agent.toolcall import ScriptedProvider, ToolCall
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import RunState
+from continuum_spectranalytics.filesystem import FileAccess, FilePolicy, MAX_READ_BYTES, MAX_WRITE_BYTES
+from continuum_spectranalytics.tools import Rejected, ToolSurface
+from continuum_spectranalytics.agent.toolspec import ToolContext, build_registry
+from continuum_spectranalytics.agent.orchestrator import ApprovalPolicy, Orchestrator, allow_all
+from continuum_spectranalytics.agent.toolcall import ScriptedProvider, ToolCall
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import RunState
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_replacement_requires_current_hash(files, tmp_path):
         with pytest.raises(Rejected, match="Read it first"):
             files.write_file(str(path), "bad", expected_sha256=digest)
     assert path.read_text() == "original"
-    assert not list(tmp_path.glob("*.polyrmc-backup-*"))
+    assert not list(tmp_path.glob("*.continuum-spectranalytics-backup-*"))
 
 
 def test_binary_round_trip(files, tmp_path):
@@ -136,7 +136,7 @@ def test_unicode_pagination_and_write_limit(files, tmp_path):
 
 
 def test_policy_missing_disabled_and_invalid_fail_closed(monkeypatch, tmp_path):
-    monkeypatch.setenv("POLYRMC_ROOT", str(tmp_path))
+    monkeypatch.setenv("CONTINUUM_SPECTRANALYTICS_ROOT", str(tmp_path))
     config = tmp_path / "filesystem-permissions.json"
     for content in (None, "{broken", '{"enabled": false}', '{"enabled": true, "read_roots": "C:/"}'):
         if content is not None:

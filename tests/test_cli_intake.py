@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from polyrmc.cli import main
+from continuum_spectranalytics.cli import main
 
 ANSWERS = {
     "technique": "SLS",

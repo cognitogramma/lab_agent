@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.config import FitRangeConfig, LoopConfig, RunConfig, SmoothingConfig
-from polyrmc.io_csv import read_processed_csv
-from polyrmc.pipeline import new_run_id, run_part1, run_part2
-from polyrmc.provenance import load_sidecar, sidecar_path
+from continuum_spectranalytics.config import FitRangeConfig, LoopConfig, RunConfig, SmoothingConfig
+from continuum_spectranalytics.io_csv import read_processed_csv
+from continuum_spectranalytics.pipeline import new_run_id, run_part1, run_part2
+from continuum_spectranalytics.provenance import load_sidecar, sidecar_path
 
 from conftest import TRUE_A2, TRUE_MW
 

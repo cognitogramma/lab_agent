@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.config import FitRangeConfig
-from polyrmc.tier0.fit_range import (
+from continuum_spectranalytics.config import FitRangeConfig
+from continuum_spectranalytics.tier0.fit_range import (
     apply_fit_range,
     conservative_fit_range,
     evaluate_range,
@@ -14,9 +14,9 @@ from polyrmc.tier0.fit_range import (
     propose_fit_ranges,
     residual_runs_z,
     sorted_finite)
-from polyrmc.tier0.optics import optical_constant
-from polyrmc.tier0.virial import build_kc_over_i, fit_virial
-from polyrmc.tier1.fit_range_selector import select_fit_range
+from continuum_spectranalytics.tier0.optics import optical_constant
+from continuum_spectranalytics.tier0.virial import build_kc_over_i, fit_virial
+from continuum_spectranalytics.tier1.fit_range_selector import select_fit_range
 
 from conftest import OVERLAP_C, TRUE_A2, TRUE_MW, ideal_intensity
 

@@ -20,8 +20,8 @@ def test_workbench_process_and_native_window_are_per_monitor_dpi_aware(tmp_path)
     if not hasattr(ctypes.windll.user32, "GetWindowDpiAwarenessContext"):
         pytest.skip("Native window DPI-context inspection requires Windows 10 or newer")
 
-    from polyrmc.agent.toolcall import SPECS
-    from polyrmc import paths
+    from continuum_spectranalytics.agent.toolcall import SPECS
+    from continuum_spectranalytics import paths
 
     environment = os.environ.copy()
     # A previous GUI fixture may have redirected the project root. Resolve the
@@ -43,7 +43,7 @@ def test_workbench_process_and_native_window_are_per_monitor_dpi_aware(tmp_path)
         import sys
         from types import SimpleNamespace
 
-        from polyrmc import paths
+        from continuum_spectranalytics import paths
         from scripts.gui_smoke import DEFAULTS
 
         example = paths.example_config()
@@ -52,7 +52,7 @@ def test_workbench_process_and_native_window_are_per_monitor_dpi_aware(tmp_path)
         data_root.mkdir(parents=True, exist_ok=True)
         os.environ[paths.ROOT_ENV] = str(data_root)
 
-        from polyrmc.gui.app import Workbench
+        from continuum_spectranalytics.gui.app import Workbench
 
         values = dict(DEFAULTS)
         values.update(config=str(example), run_id="dpi-check",

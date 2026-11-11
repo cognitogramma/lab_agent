@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.io_csv import COLUMNS, read_processed_csv, write_processed_csv
+from continuum_spectranalytics.io_csv import COLUMNS, read_processed_csv, write_processed_csv
 
 SOURCE_HEADER = [
     "Header Rows: 4",

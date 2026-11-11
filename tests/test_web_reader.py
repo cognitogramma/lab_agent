@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from polyrmc import web_reader as reader
+from continuum_spectranalytics import web_reader as reader
 
 
 PUBLIC_IP = "93.184.216.34"

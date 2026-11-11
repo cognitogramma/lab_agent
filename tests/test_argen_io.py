@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.state import TimeFormat
-from polyrmc.tier0.argen_io import (
+from continuum_spectranalytics.state import TimeFormat
+from continuum_spectranalytics.tier0.argen_io import (
     detect_delimiter,
     detect_time_format,
     find_declared_header_length,

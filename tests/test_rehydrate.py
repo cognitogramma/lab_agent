@@ -14,9 +14,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from polyrmc import figures
-from polyrmc.io_csv import write_processed_csv
-from polyrmc.rehydrate import find_run, list_past_runs, load_past_run
+from continuum_spectranalytics import figures
+from continuum_spectranalytics.io_csv import write_processed_csv
+from continuum_spectranalytics.rehydrate import find_run, list_past_runs, load_past_run
 
 
 @pytest.fixture

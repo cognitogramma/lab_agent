@@ -13,9 +13,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from polyrmc import figures
-from polyrmc.cli import main
-from polyrmc.tabular import UnsupportedFile, open_table
+from continuum_spectranalytics import figures
+from continuum_spectranalytics.cli import main
+from continuum_spectranalytics.tabular import UnsupportedFile, open_table
 
 
 @pytest.fixture
@@ -143,7 +143,7 @@ def test_cli_describes_a_file_when_given_no_columns(argen_file, capsys):
     assert code == 0
     assert "plottable columns:" in out
     assert "ls8" in out
-    assert "polyrmc plot --file" in out  # tells you the next command
+    assert "continuum-spectranalytics plot --file" in out  # tells you the next command
 
 
 def test_cli_writes_a_figure_beside_the_file(argen_file, capsys):

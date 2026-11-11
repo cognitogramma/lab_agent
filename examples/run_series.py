@@ -23,16 +23,16 @@ from pathlib import Path
 import numpy as np
 from dotenv import load_dotenv
 
-from polyrmc.config import LoopConfig, OpticalConfig, RunConfig, SmoothingConfig
-from polyrmc.io_csv import read_processed_csv
-from polyrmc.pipeline import run_part1
-from polyrmc.provenance import sidecar_path, summarize_loop
-from polyrmc.tier0.argen_io import (
+from continuum_spectranalytics.config import LoopConfig, OpticalConfig, RunConfig, SmoothingConfig
+from continuum_spectranalytics.io_csv import read_processed_csv
+from continuum_spectranalytics.pipeline import run_part1
+from continuum_spectranalytics.provenance import sidecar_path, summarize_loop
+from continuum_spectranalytics.tier0.argen_io import (
     find_declared_header_length,
     load_argen_file,
     parse_header_metadata,
 )
-from polyrmc.figures import (
+from continuum_spectranalytics.figures import (
     plot_blank_audit,
     plot_blank_comparison,
     plot_derived_quantities,
@@ -41,9 +41,9 @@ from polyrmc.figures import (
     plot_series_comparison,
     plot_smoothing_detail,
 )
-from polyrmc.plotting import plot_run, plot_session
-from polyrmc.tier0.dilution import plateau_swing
-from polyrmc.tier1.judge import ModelJudge, StaticJudge
+from continuum_spectranalytics.plotting import plot_run, plot_session
+from continuum_spectranalytics.tier0.dilution import plateau_swing
+from continuum_spectranalytics.tier1.judge import ModelJudge, StaticJudge
 
 
 def read_header(path: Path) -> dict[str, str]:

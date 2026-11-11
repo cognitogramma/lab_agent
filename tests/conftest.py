@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from polyrmc.config import (
+from continuum_spectranalytics.config import (
     DilutionConfig,
     FitRangeConfig,
     LoopConfig,
@@ -17,7 +17,7 @@ from polyrmc.config import (
     RunConfig,
     SmoothingConfig,
 )
-from polyrmc.tier0.optics import optical_constant
+from continuum_spectranalytics.tier0.optics import optical_constant
 
 # Values chosen to sit in the same range as the published validation set.
 TRUE_MW = 66430.0  # g/mol, BSA
@@ -35,9 +35,9 @@ def gui_app(tmp_path_factory):
 
     tk = pytest.importorskip("tkinter")
     pytest.importorskip("customtkinter")
-    from polyrmc import paths
-    from polyrmc.agent.toolcall import SPECS
-    from polyrmc.gui.app import Workbench
+    from continuum_spectranalytics import paths
+    from continuum_spectranalytics.agent.toolcall import SPECS
+    from continuum_spectranalytics.gui.app import Workbench
 
     example = paths.example_config()
     if not example.exists():
@@ -93,7 +93,7 @@ def isolate_runs_dir(tmp_path, monkeypatch):
     sample do last time" answered partly from fixtures is worse than not
     answering, because nothing marks which rows were real.
     """
-    import polyrmc.config as config_module
+    import continuum_spectranalytics.config as config_module
 
     # Not tmp_path/"runs": tests that build their own fixture history there
     # would collide with this one.

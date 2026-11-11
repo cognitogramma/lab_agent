@@ -4,7 +4,7 @@ import tkinter.font as tkfont
 
 import pytest
 
-from polyrmc.gui import theme
+from continuum_spectranalytics.gui import theme
 
 
 @pytest.fixture(scope="module")

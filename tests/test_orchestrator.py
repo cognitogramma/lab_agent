@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from polyrmc.agent.orchestrator import (
+from continuum_spectranalytics.agent.orchestrator import (
     Approval,
     ApprovalPolicy,
     Orchestrator,
@@ -27,12 +27,12 @@ from polyrmc.agent.orchestrator import (
     default_system_prompt,
     deny_all,
 )
-from polyrmc.agent.toolcall import AssistantTurn, Message, ScriptedProvider, ToolCall
-from polyrmc.agent.toolspec import Tool, ToolContext, build_registry
-from polyrmc.io_csv import read_processed_csv
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics.agent.toolcall import AssistantTurn, Message, ScriptedProvider, ToolCall
+from continuum_spectranalytics.agent.toolspec import Tool, ToolContext, build_registry
+from continuum_spectranalytics.io_csv import read_processed_csv
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 ANSWERS = {
     "technique": "SLS",
@@ -348,7 +348,7 @@ def test_past_runs_are_searchable_as_a_tool(context, tmp_path):
 
 
 def test_the_session_totals_what_it_spent(context):
-    from polyrmc.agent.budget import Budget, Usage
+    from continuum_spectranalytics.agent.budget import Budget, Usage
 
     turns = [
         AssistantTurn(
@@ -376,7 +376,7 @@ def test_the_session_totals_what_it_spent(context):
 def test_the_request_budget_stops_the_loop_before_it_spends(context):
     """The Gemini free tier rations requests, not tokens. A cap that only
     triggered on tokens would never fire before the day's quota was gone."""
-    from polyrmc.agent.budget import Budget
+    from continuum_spectranalytics.agent.budget import Budget
 
     provider = ScriptedProvider([call("get_state") for _ in range(6)])
     agent = Orchestrator(
@@ -398,7 +398,7 @@ def test_a_provider_without_usage_metadata_still_counts_requests(context):
     """Losing the token figures must not lose the count the free tier rations."""
     from langchain_core.messages import AIMessage
 
-    from polyrmc.agent.toolcall import _usage_of
+    from continuum_spectranalytics.agent.toolcall import _usage_of
 
     usage = _usage_of(AIMessage(content="no usage metadata here"))
 
@@ -409,7 +409,7 @@ def test_a_provider_without_usage_metadata_still_counts_requests(context):
 def test_usage_is_read_off_a_real_reply():
     from langchain_core.messages import AIMessage
 
-    from polyrmc.agent.toolcall import _usage_of
+    from continuum_spectranalytics.agent.toolcall import _usage_of
 
     reply = AIMessage(
         content="x",
@@ -452,8 +452,8 @@ def test_every_schema_binds_against_the_real_provider_converter():
     network, and the schemas stay plain enough for both providers.
     """
     genai = pytest.importorskip("langchain_google_genai._function_utils")
-    from polyrmc.agent.toolcall import as_openai_tools
-    from polyrmc.agent.toolspec import schemas_for
+    from continuum_spectranalytics.agent.toolcall import as_openai_tools
+    from continuum_spectranalytics.agent.toolspec import schemas_for
 
     registry = build_registry()
     converted = genai.convert_to_genai_function_declarations(
@@ -770,7 +770,7 @@ def test_ctrl_c_ends_the_turn_and_the_second_one_ends_the_wait():
     second one is the escape hatch, for when the provider is hung and the
     researcher wants their terminal back.
     """
-    from polyrmc.cli import Interruptible
+    from continuum_spectranalytics.cli import Interruptible
 
     seen = []
     interrupts = Interruptible(on_notice=seen.append)
@@ -794,7 +794,7 @@ def test_an_interruptible_turn_off_the_main_thread_is_not_an_error():
     """Signals only exist on the main thread; a worker just runs to completion."""
     import threading
 
-    from polyrmc.cli import Interruptible
+    from continuum_spectranalytics.cli import Interruptible
 
     outcome = []
 

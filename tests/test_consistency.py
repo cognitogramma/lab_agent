@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.tier0.consistency import (
+from continuum_spectranalytics.tier0.consistency import (
     check_declarations,
     dominant_period_s,
     fit_exponential_decay,

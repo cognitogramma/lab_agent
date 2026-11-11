@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.intake import (
+from continuum_spectranalytics.intake import (
     DN_DC_BY_CLASS,
     INSTRUMENTS,
     DeclarationSet,
     build_intake_form,
     render_question,
 )
-from polyrmc.tier0.argen_io import lookup_metadata, parse_concentration
+from continuum_spectranalytics.tier0.argen_io import lookup_metadata, parse_concentration
 
 
 def test_experiment_type_is_asked_not_inferred():
@@ -144,6 +144,6 @@ def test_rendered_question_shows_sources_and_what_it_blocks():
     text = render_question(declarations.refresh_form().by_key("r_toluene_cm_inv"))
 
     assert "DESIGN.md" in text
-    assert "polyrmc.config" in text
+    assert "continuum_spectranalytics.config" in text
     assert "settled by a person" in text
     assert "I_rayleigh" in text

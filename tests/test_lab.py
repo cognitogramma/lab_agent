@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.agent.lab import (
+from continuum_spectranalytics.agent.lab import (
     MISSING_NOTICE,
     find_lab_file,
     load_lab_context,
     load_prompt,
     system_prompt_with_lab,
 )
-from polyrmc.state import RunState
+from continuum_spectranalytics.state import RunState
 
 
 def test_prompts_are_files_a_researcher_can_edit():
@@ -69,11 +69,11 @@ def test_the_system_prompt_carries_the_lab_context():
 def test_the_agent_starts_with_real_lab_context(run_config):
     """An agent running without LAB.md still refuses the right things -- the
     guards are in code -- but it does not know this lab's conventions."""
-    from polyrmc.agent.orchestrator import ApprovalPolicy, Orchestrator
-    from polyrmc.agent.toolcall import ScriptedProvider
-    from polyrmc.agent.toolspec import ToolContext
-    from polyrmc.memory.notes import NoteBook
-    from polyrmc.tools import ToolSurface
+    from continuum_spectranalytics.agent.orchestrator import ApprovalPolicy, Orchestrator
+    from continuum_spectranalytics.agent.toolcall import ScriptedProvider
+    from continuum_spectranalytics.agent.toolspec import ToolContext
+    from continuum_spectranalytics.memory.notes import NoteBook
+    from continuum_spectranalytics.tools import ToolSurface
 
     agent = Orchestrator(
         context=ToolContext(

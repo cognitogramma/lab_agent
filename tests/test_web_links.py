@@ -2,7 +2,7 @@
 
 import pytest
 
-from polyrmc.gui.links import open_web_url, safe_web_url
+from continuum_spectranalytics.gui.links import open_web_url, safe_web_url
 
 
 @pytest.mark.parametrize("url", [
@@ -12,7 +12,7 @@ from polyrmc.gui.links import open_web_url, safe_web_url
 ])
 def test_invalid_source_links_never_reach_the_browser(url, monkeypatch):
     opened = []
-    monkeypatch.setattr("polyrmc.gui.links.webbrowser.open_new_tab", opened.append)
+    monkeypatch.setattr("continuum_spectranalytics.gui.links.webbrowser.open_new_tab", opened.append)
     assert safe_web_url(url) is None
     assert open_web_url(url) is False
     assert opened == []
@@ -20,7 +20,7 @@ def test_invalid_source_links_never_reach_the_browser(url, monkeypatch):
 
 def test_valid_source_opens_its_exact_url(monkeypatch):
     opened = []
-    monkeypatch.setattr("polyrmc.gui.links.webbrowser.open_new_tab", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("continuum_spectranalytics.gui.links.webbrowser.open_new_tab", lambda url: opened.append(url) or True)
     url = "https://doi.org/10.1234/example?a=1#figure"
     assert open_web_url(url) is True
     assert opened == [url]

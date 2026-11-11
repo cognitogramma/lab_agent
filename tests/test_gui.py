@@ -2,7 +2,7 @@
 
 Two halves, for two different reasons.
 
-The half that matters runs headless. :mod:`polyrmc.gui.session` imports no Tk on
+The half that matters runs headless. :mod:`continuum_spectranalytics.gui.session` imports no Tk on
 purpose, so the thing worth testing -- a turn crossing from a worker thread to a
 window, and a commit stopping dead in the middle of it until a person answers --
 is testable on any machine, including one with no display. Every failure mode
@@ -24,18 +24,18 @@ from pathlib import Path
 
 import pytest
 
-from polyrmc.agent.orchestrator import (
+from continuum_spectranalytics.agent.orchestrator import (
     Approval,
     ApprovalPolicy,
     Orchestrator,
     allow_all,
 )
-from polyrmc.agent.toolcall import AssistantTurn, ScriptedProvider, ToolCall
-from polyrmc.agent.toolspec import ToolContext, build_registry
-from polyrmc.gui.session import ApprovalRequest, Bridge, Signal
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics.agent.toolcall import AssistantTurn, ScriptedProvider, ToolCall
+from continuum_spectranalytics.agent.toolspec import ToolContext, build_registry
+from continuum_spectranalytics.gui.session import ApprovalRequest, Bridge, Signal
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 TIMEOUT = 20.0
 
@@ -323,10 +323,10 @@ def window(app):
 
 
 def test_the_transcript_renders_every_kind_of_event(root):
-    from polyrmc.agent.orchestrator import Event
-    from polyrmc.agent.toolcall import ProviderFailure
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import Transcript
+    from continuum_spectranalytics.agent.orchestrator import Event
+    from continuum_spectranalytics.agent.toolcall import ProviderFailure
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import Transcript
 
     fonts = theme.apply(root)
     transcript = Transcript(root, fonts)
@@ -356,9 +356,9 @@ def test_the_transcript_renders_every_kind_of_event(root):
 
 
 def test_the_state_panel_shows_what_the_model_is_given(root, run_config):
-    from polyrmc.agent.toolspec import render_state
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import StatePanel
+    from continuum_spectranalytics.agent.toolspec import render_state
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import StatePanel
 
     fonts = theme.apply(root)
     surface = ToolSurface(state=RunState(run_id="r", source_file="none"), config=run_config)
@@ -374,8 +374,8 @@ def test_the_state_panel_shows_what_the_model_is_given(root, run_config):
 
 
 def test_dismissing_the_approval_dialog_is_a_refusal(root):
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import ApprovalDialog
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import ApprovalDialog
 
     fonts = theme.apply(root)
     tool = build_registry()["pick_window"]
@@ -392,8 +392,8 @@ def test_dismissing_the_approval_dialog_is_a_refusal(root):
 
 
 def test_the_approval_dialog_shows_every_argument(root):
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import ApprovalDialog
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import ApprovalDialog
 
     fonts = theme.apply(root)
     tool = build_registry()["set_declaration"]
@@ -569,7 +569,7 @@ def test_the_window_says_stopping_not_stopped(window, context):
         window._busy(False)
 
 
-GUI_PACKAGE = Path(__file__).resolve().parents[1] / "src" / "polyrmc" / "gui"
+GUI_PACKAGE = Path(__file__).resolve().parents[1] / "src" / "continuum_spectranalytics" / "gui"
 
 
 def test_the_window_offers_no_route_of_its_own():
@@ -582,7 +582,7 @@ def test_the_window_offers_no_route_of_its_own():
     change a run. Everything that computes or commits reaches the run through
     the model's own tool calls, past the approval gate.
     """
-    from polyrmc.agent.toolspec import build_registry
+    from continuum_spectranalytics.agent.toolspec import build_registry
 
     registry = build_registry()
     sources = {p.name: p.read_text(encoding="utf-8") for p in GUI_PACKAGE.glob("*.py")}
@@ -609,8 +609,8 @@ def test_the_window_offers_no_route_of_its_own():
 def test_the_models_markdown_is_rendered_not_displayed(root):
     """``###`` is a formatting instruction, and showing it is the same failure
     as printing call syntax at somebody."""
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import Transcript
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import Transcript
 
     transcript = Transcript(root, theme.apply(root))
     transcript.model(
@@ -639,8 +639,8 @@ def test_the_models_markdown_is_rendered_not_displayed(root):
 
 
 def test_prose_without_markdown_is_left_alone(root):
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import Transcript
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import Transcript
 
     transcript = Transcript(root, theme.apply(root))
     plain = "The sweep put nine odd windows inside the safe band; 31 is narrowest."
@@ -650,8 +650,8 @@ def test_prose_without_markdown_is_left_alone(root):
 
 
 def test_web_citations_are_clickable_but_active_schemes_are_plain_text(root):
-    from polyrmc.gui import theme
-    from polyrmc.gui.widgets import Transcript
+    from continuum_spectranalytics.gui import theme
+    from continuum_spectranalytics.gui.widgets import Transcript
 
     transcript = Transcript(root, theme.apply(root))
     transcript.model(
@@ -682,7 +682,7 @@ def test_research_navigation_does_not_need_a_model_or_start_a_request(window):
 
 def test_literature_reader_keeps_a_structured_tool_failure(window, monkeypatch):
     import json
-    from polyrmc.agent.toolspec import ToolFailure
+    from continuum_spectranalytics.agent.toolspec import ToolFailure
 
     def unavailable(_context, _arguments):
         raise ToolFailure("Unsupported PDF", json.dumps({"error": "Open the original PDF to read it.",
@@ -715,7 +715,7 @@ def test_completed_explicit_review_opens_in_the_large_reader(window, monkeypatch
 
 
 def test_stopped_review_is_not_presented_as_a_finished_comparison(window, monkeypatch):
-    from polyrmc.agent.orchestrator import Event
+    from continuum_spectranalytics.agent.orchestrator import Event
 
     rendered = []
     monkeypatch.setattr(window.research_panel, "show_review", rendered.append)

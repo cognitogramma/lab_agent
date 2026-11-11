@@ -11,9 +11,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.config import BaselineConfig
-from polyrmc.state import AnchorCandidate
-from polyrmc.tier0.anchors import (
+from continuum_spectranalytics.config import BaselineConfig
+from continuum_spectranalytics.state import AnchorCandidate
+from continuum_spectranalytics.tier0.anchors import (
     apply_correction,
     evaluate_drift,
     fit_drift,
@@ -22,7 +22,7 @@ from polyrmc.tier0.anchors import (
     total_fold_change,
     validate_selection,
 )
-from polyrmc.tier0.landmarks import lag_slope, transition_region
+from continuum_spectranalytics.tier0.landmarks import lag_slope, transition_region
 
 RNG = np.random.default_rng(20260805)
 NOISE = 0.002
@@ -332,7 +332,7 @@ def test_the_drift_curve_regenerates_from_the_record_alone(time_s, drifting):
     drift = fit_drift(time_s, drifting, selected)
 
     # Round-trip through serialization, as the sidecar does.
-    from polyrmc.state import DriftModel
+    from continuum_spectranalytics.state import DriftModel
 
     restored = DriftModel.model_validate_json(drift.model_dump_json())
     assert np.allclose(evaluate_drift(restored, time_s), evaluate_drift(drift, time_s))

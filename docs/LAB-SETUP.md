@@ -5,7 +5,7 @@ machines run. Nothing in this document needs an API key until the section that
 says it does.
 
 > **Standing up a brand-new machine?** Read
-> [`docs/polyrmc-setup.pdf`](polyrmc-setup.pdf) instead. It starts from a
+> [`docs/continuum-spectranalytics-setup.pdf`](continuum-spectranalytics-setup.pdf) instead. It starts from a
 > computer with no Python on it and assumes this repository is all you have,
 > including the case where the machine cannot reach the internet. This document
 > assumes you already have a working checkout.
@@ -31,7 +31,7 @@ check with.
 Check it worked:
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli plot --file examples\run_config.example.json
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli plot --file examples\run_config.example.json
 ```
 
 It should refuse that file politely. A refusal with a readable sentence means the
@@ -74,12 +74,12 @@ figures, you are already finished installing.
 
 | Command | What it does | Key needed |
 |---|---|---|
-| `polyrmc plot --file <f>` | See what is in a data file | no |
-| `polyrmc plot --file <f> --x A --y B` | Make a PNG | no |
-| `polyrmc intake` | Declare an experiment | no |
-| `polyrmc process` | Run the pipeline | no |
-| `polyrmc run --judge static` | The whole path, deterministically | no |
-| `polyrmc agent` | Talk to it | **yes** |
+| `continuum-spectranalytics plot --file <f>` | See what is in a data file | no |
+| `continuum-spectranalytics plot --file <f> --x A --y B` | Make a PNG | no |
+| `continuum-spectranalytics intake` | Declare an experiment | no |
+| `continuum-spectranalytics process` | Run the pipeline | no |
+| `continuum-spectranalytics run --judge static` | The whole path, deterministically | no |
+| `continuum-spectranalytics agent` | Talk to it | **yes** |
 
 ---
 
@@ -88,7 +88,7 @@ figures, you are already finished installing.
 Point it at anything and it tells you what is inside:
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli plot --file "C:\data\conductivity.QDA"
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli plot --file "C:\data\conductivity.QDA"
 ```
 
 ```
@@ -107,7 +107,7 @@ which kind it decided the file was, and says so when it had to guess.
 ### Making a figure
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli plot `
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli plot `
     --file "C:\data\conductivity.QDA" `
     --x "time (sec)" --y "conductivity (uS/cm)"
 ```
@@ -129,7 +129,7 @@ A `.QPC` is a *graph*, and it contains **no data** — the numbers are in the
 fit was used:
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli plot --file "C:\data\Stress Plot.QPC"
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli plot --file "C:\data\Stress Plot.QPC"
 ```
 
 There is **no `.QDR` format**. KaleidaGraph writes `.QDA` (data), `.QPC` (graph),
@@ -141,8 +141,8 @@ somebody asks you for a `.QDR`, they mean one of those two.
 ## 4. Processing a run
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli intake --raw "C:\data\run.txt"
-.\.venv\Scripts\python.exe -m polyrmc.cli run --config <the config intake wrote>
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli intake --raw "C:\data\run.txt"
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli run --config <the config intake wrote>
 ```
 
 Intake asks you to **declare** the experiment — what the sample is, what
@@ -172,14 +172,14 @@ Only now do you need a key. These are **API keys, billed per token** — a ChatG
 Plus or Claude Pro subscription is a different product and does not work here.
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli setup
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli setup
 ```
 
 It lists the providers, shows which are already keyed, and gives you the URL to
 buy one. Paste a key and it spends one tiny call to confirm the key actually
 works — better to find out now than three questions into a session.
 
-The key is stored in `.env` at the project root, which is gitignored. `polyrmc
+The key is stored in `.env` at the project root, which is gitignored. `continuum-spectranalytics
 setup` prints the exact path it used.
 
 | Provider | Key | Where |
@@ -191,7 +191,7 @@ setup` prints the exact path it used.
 Then:
 
 ```powershell
-.\.venv\Scripts\python.exe -m polyrmc.cli agent
+.\.venv\Scripts\python.exe -m continuum_spectranalytics.cli agent
 ```
 
 Every turn prints what it spent. `/cost` gives the session total. Anything that
@@ -204,13 +204,13 @@ because approving every read just trains you to click yes without looking.
 
 By default everything hangs off the project root — the folder with
 `pyproject.toml` in it — no matter which directory you launch from. So you can
-run `polyrmc` from the folder holding your raw data and it will still find the
+run `continuum-spectranalytics` from the folder holding your raw data and it will still find the
 run history and your saved key.
 
 To keep data somewhere else entirely:
 
 ```powershell
-$env:POLYRMC_ROOT = "D:\lab\polyrmc-data"
+$env:CONTINUUM_SPECTRANALYTICS_ROOT = "D:\lab\continuum-spectranalytics-data"
 ```
 
 ---
@@ -243,7 +243,7 @@ column stored as text (an ARGEN `elapsedtime`, for instance) is reported by name
 rather than silently skipped.
 
 **The agent says a provider failed** — it names the category. Out of quota is a
-billing matter; a rejected key wants `polyrmc setup`; a stale model id wants
+billing matter; a rejected key wants `continuum-spectranalytics setup`; a stale model id wants
 `--model`. It will not quietly fail over onto another of your keys, because that
 is your money.
 
@@ -251,7 +251,7 @@ is your money.
 
 ## Further reading
 
-`docs/polyrmc-architecture.pdf` — what the system is, what each tier may and may
+`docs/continuum-spectranalytics-architecture.pdf` — what the system is, what each tier may and may
 not do, the reverse-engineered KaleidaGraph format, and the known gaps. Rebuild
 it after changing anything it describes:
 

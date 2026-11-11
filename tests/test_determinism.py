@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.pipeline import run_part1, run_part2
+from continuum_spectranalytics.pipeline import run_part1, run_part2
 
 
 def _body(path) -> str:

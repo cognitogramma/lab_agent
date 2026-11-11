@@ -8,12 +8,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from polyrmc import literature, paths
-from polyrmc.agent.toolspec import ToolContext
-from polyrmc.literature_store import ReadingLibrary
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import AnomalyRecord, AnomalyType, Declaration, RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics import literature, paths
+from continuum_spectranalytics.agent.toolspec import ToolContext
+from continuum_spectranalytics.literature_store import ReadingLibrary
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import AnomalyRecord, AnomalyType, Declaration, RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 
 @pytest.fixture

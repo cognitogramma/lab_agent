@@ -16,31 +16,31 @@ import types
 
 import pytest
 
-from polyrmc.agent.budget import Budget, Usage
-from polyrmc.agent.orchestrator import (
+from continuum_spectranalytics.agent.budget import Budget, Usage
+from continuum_spectranalytics.agent.orchestrator import (
     ApprovalPolicy,
     Event,
     Orchestrator,
     allow_all,
 )
-from polyrmc.agent.toolcall import (
+from continuum_spectranalytics.agent.toolcall import (
     AssistantTurn,
     ProviderCallFailed,
     ScriptedProvider,
     ToolCall,
     classify_provider_error,
 )
-from polyrmc.agent.toolspec import ToolContext, build_registry
-from polyrmc.agent.transcript import (
+from continuum_spectranalytics.agent.toolspec import ToolContext, build_registry
+from continuum_spectranalytics.agent.transcript import (
     Narrator,
     SessionLog,
     activity,
     error_block,
     first_sentence,
 )
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 
 @pytest.fixture
@@ -302,7 +302,7 @@ def test_a_commit_is_narrated_before_it_is_put_to_the_researcher(context):
     def ask_and_record(tool, call_):
         # Whatever has been yielded by now is what the researcher has read by
         # the time this question reaches them.
-        from polyrmc.agent.orchestrator import Approval
+        from continuum_spectranalytics.agent.orchestrator import Approval
 
         seen.append("PROMPT")
         return Approval(True)
@@ -408,7 +408,7 @@ def test_a_rate_limit_is_waited_out_rather_than_ending_the_session():
     there is nothing to pay twice for. Ending a minutes-old conversation over it
     trades a real loss for an imaginary saving.
     """
-    from polyrmc.agent.toolcall import LangChainToolProvider
+    from continuum_spectranalytics.agent.toolcall import LangChainToolProvider
 
     slept: list[float] = []
     client = FakeClient([RuntimeError(RATE_LIMIT)])
@@ -425,7 +425,7 @@ def test_a_rate_limit_is_waited_out_rather_than_ending_the_session():
 
 def test_a_daily_quota_ends_the_session_on_the_first_answer():
     """Waiting cannot fix a spent day, so nothing waits."""
-    from polyrmc.agent.toolcall import LangChainToolProvider
+    from continuum_spectranalytics.agent.toolcall import LangChainToolProvider
 
     slept: list[float] = []
     client = FakeClient([RuntimeError(DAILY_QUOTA)] * 4)
@@ -442,7 +442,7 @@ def test_a_daily_quota_ends_the_session_on_the_first_answer():
 
 
 def test_waiting_is_bounded_so_a_stuck_limit_still_stops():
-    from polyrmc.agent.toolcall import LangChainToolProvider
+    from continuum_spectranalytics.agent.toolcall import LangChainToolProvider
 
     slept: list[float] = []
     client = FakeClient([RuntimeError(RATE_LIMIT)] * 10)
@@ -459,7 +459,7 @@ def test_waiting_is_bounded_so_a_stuck_limit_still_stops():
 
 def test_pacing_leaves_the_asked_for_gap_between_requests():
     """Cheaper than being refused: a session that paces is never rate limited."""
-    from polyrmc.agent.toolcall import LangChainToolProvider
+    from continuum_spectranalytics.agent.toolcall import LangChainToolProvider
 
     now = [100.0]
     slept: list[float] = []

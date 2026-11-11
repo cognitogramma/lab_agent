@@ -17,13 +17,13 @@ from urllib.parse import urlsplit
 import numpy as np
 import pytest
 
-from polyrmc.agent.budget import Budget
-from polyrmc.agent.orchestrator import Approval, ApprovalPolicy, Orchestrator
-from polyrmc.agent.toolcall import AssistantTurn, ScriptedProvider, ToolCall
-from polyrmc.agent.toolspec import ToolContext, build_registry
-from polyrmc.memory.notes import NoteBook
-from polyrmc.state import Declaration, RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics.agent.budget import Budget
+from continuum_spectranalytics.agent.orchestrator import Approval, ApprovalPolicy, Orchestrator
+from continuum_spectranalytics.agent.toolcall import AssistantTurn, ScriptedProvider, ToolCall
+from continuum_spectranalytics.agent.toolspec import ToolContext, build_registry
+from continuum_spectranalytics.memory.notes import NoteBook
+from continuum_spectranalytics.state import Declaration, RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 
 QUERY = "polymer light scattering second virial coefficient"
@@ -101,8 +101,8 @@ def mock_public_sources(monkeypatch, source_url, after_search=None, page_links=N
     """Patch only external lookup functions, leaving registry/loop intact."""
     search_calls = []
     page_calls = []
-    research = importlib.import_module("polyrmc.research")
-    reader = importlib.import_module("polyrmc.web_reader")
+    research = importlib.import_module("continuum_spectranalytics.research")
+    reader = importlib.import_module("continuum_spectranalytics.web_reader")
 
     def search_internet(**arguments):
         search_calls.append(arguments)
@@ -377,7 +377,7 @@ def test_tool_failure_reaches_provider_and_it_recovers_with_a_revised_search(con
 
 def test_literature_review_result_drives_source_reading_in_the_real_agent(context, monkeypatch):
     """Combined discovery reaches the model before it chooses what to read."""
-    from polyrmc import literature
+    from continuum_spectranalytics import literature
 
     source_url = "https://example.org/experiment-related-paper"
     _search_calls, page_calls = mock_public_sources(monkeypatch, source_url)
@@ -425,7 +425,7 @@ def test_literature_review_result_drives_source_reading_in_the_real_agent(contex
 
 @pytest.mark.parametrize("allowance", [0, 1])
 def test_literature_discovery_shares_the_internet_budget(context, monkeypatch, allowance):
-    from polyrmc import literature
+    from continuum_spectranalytics import literature
 
     called = []
 

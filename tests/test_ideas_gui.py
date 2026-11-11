@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from polyrmc.gui.ideas import IdeaComposer
-from polyrmc.memory.notes import NoteBook
+from continuum_spectranalytics.gui.ideas import IdeaComposer
+from continuum_spectranalytics.memory.notes import NoteBook
 
 
 def test_manual_idea_save_persists_and_refreshes_the_notebook(gui_app, tmp_path, monkeypatch):

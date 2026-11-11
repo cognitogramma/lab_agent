@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from polyrmc.agent.toolcall import (
+from continuum_spectranalytics.agent.toolcall import (
     SPECS,
     LangChainToolProvider,
     Message,
@@ -134,7 +134,7 @@ def test_missing_key_points_at_a_provider_that_is_keyed(monkeypatch):
 def test_missing_package_reports_the_pip_line(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setattr(
-        "polyrmc.agent.toolcall._client_for",
+        "continuum_spectranalytics.agent.toolcall._client_for",
         lambda *a, **kw: (_ for _ in ()).throw(ImportError("no module")),
     )
 
@@ -151,7 +151,7 @@ def test_model_pin_resolution_order(monkeypatch, kind):
     monkeypatch.setenv(spec.canonical_key, "k")
     seen: list[str] = []
     monkeypatch.setattr(
-        "polyrmc.agent.toolcall._client_for",
+        "continuum_spectranalytics.agent.toolcall._client_for",
         lambda s, model, key, temp: seen.append(model) or FakeClient(),
     )
 
@@ -173,7 +173,7 @@ def test_built_provider_carries_the_key_it_was_given(monkeypatch):
         captured.update(spec=spec.name, model=model, api_key=api_key)
         return FakeClient()
 
-    monkeypatch.setattr("polyrmc.agent.toolcall._client_for", record)
+    monkeypatch.setattr("continuum_spectranalytics.agent.toolcall._client_for", record)
     provider = build_provider("gemini")
 
     assert captured["api_key"] == "k-only-under-the-second-name"
@@ -253,7 +253,7 @@ def test_there_is_no_failover_between_providers(monkeypatch):
         attempts.append(spec.name)
         return FakeClient(error=RuntimeError("429 quota exceeded"))
 
-    monkeypatch.setattr("polyrmc.agent.toolcall._client_for", record)
+    monkeypatch.setattr("continuum_spectranalytics.agent.toolcall._client_for", record)
     provider = build_provider("gemini")
 
     with pytest.raises(ProviderCallFailed):
@@ -266,7 +266,7 @@ def test_there_is_no_failover_between_providers(monkeypatch):
 
 
 def test_persist_key_replaces_rather_than_appends(tmp_path: Path):
-    from polyrmc.cli import _persist_key
+    from continuum_spectranalytics.cli import _persist_key
 
     env = tmp_path / ".env"
     env.write_text("OTHER=keep-me\nANTHROPIC_API_KEY=old\n", encoding="utf-8")
@@ -283,7 +283,7 @@ def test_persist_key_replaces_rather_than_appends(tmp_path: Path):
 
 
 def test_persist_key_creates_the_file_when_absent(tmp_path: Path):
-    from polyrmc.cli import _persist_key
+    from continuum_spectranalytics.cli import _persist_key
 
     env = tmp_path / ".env"
     assert _persist_key(SPECS["openai"], "k-fresh", env)

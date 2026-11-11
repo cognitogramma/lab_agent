@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-TIER0 = Path(__file__).resolve().parent.parent / "src" / "polyrmc" / "tier0"
+TIER0 = Path(__file__).resolve().parent.parent / "src" / "continuum_spectranalytics" / "tier0"
 
 FORBIDDEN_MODULES = {
     "anthropic",
@@ -111,9 +111,9 @@ def test_tier0_imports_only_from_tier0_and_config():
                 module = node.module
             elif isinstance(node, ast.Import):
                 module = node.names[0].name
-            if module and module.startswith("polyrmc"):
+            if module and module.startswith("continuum_spectranalytics"):
                 assert not module.startswith(
-                    ("polyrmc.tier1", "polyrmc.tier2", "polyrmc.agent", "polyrmc.tools")
+                    ("continuum_spectranalytics.tier1", "continuum_spectranalytics.tier2", "continuum_spectranalytics.agent", "continuum_spectranalytics.tools")
                 ), (
                     f"{path.name} imports {module}; tier 0 must not depend on a "
                     "higher tier"
@@ -140,7 +140,7 @@ def test_the_measurement_path_does_not_import_the_agent():
                 module = node.module
             elif isinstance(node, ast.Import):
                 module = node.names[0].name
-            assert not (module or "").startswith("polyrmc.agent"), (
+            assert not (module or "").startswith("continuum_spectranalytics.agent"), (
                 f"{path.name} imports {module}; the measurement path must run with "
                 "no model layer present at all"
             )

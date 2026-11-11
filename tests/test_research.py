@@ -11,8 +11,8 @@ import urllib.parse
 
 import pytest
 
-from polyrmc import research
-from polyrmc.agent.toolspec import build_registry
+from continuum_spectranalytics import research
+from continuum_spectranalytics.agent.toolspec import build_registry
 
 
 @pytest.fixture(autouse=True)

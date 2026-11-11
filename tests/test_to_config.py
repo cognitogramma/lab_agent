@@ -12,8 +12,8 @@ import json
 
 import pytest
 
-from polyrmc.cli import main
-from polyrmc.intake import DeclarationSet, MissingDeclarations, to_config
+from continuum_spectranalytics.cli import main
+from continuum_spectranalytics.intake import DeclarationSet, MissingDeclarations, to_config
 
 ANSWERS = {
     "technique": "SLS",

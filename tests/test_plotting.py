@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.io_csv import read_processed_csv
-from polyrmc.pipeline import run_part1
-from polyrmc.plotting import plot_run, plot_session
-from polyrmc.tier0.argen_io import at_full_scale, gain_change_indices
+from continuum_spectranalytics.io_csv import read_processed_csv
+from continuum_spectranalytics.pipeline import run_part1
+from continuum_spectranalytics.plotting import plot_run, plot_session
+from continuum_spectranalytics.tier0.argen_io import at_full_scale, gain_change_indices
 
 
 def test_gain_change_indices_finds_a_switch():

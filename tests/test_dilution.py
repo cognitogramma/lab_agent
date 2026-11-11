@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.config import DilutionConfig
-from polyrmc.tier0.dilution import (
+from continuum_spectranalytics.config import DilutionConfig
+from continuum_spectranalytics.tier0.dilution import (
     aggregation_index,
     concentration_at,
     dilution_time_constant,

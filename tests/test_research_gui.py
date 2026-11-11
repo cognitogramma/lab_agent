@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from polyrmc.gui.research import ResearchPanel, safe_web_url
+from continuum_spectranalytics.gui.research import ResearchPanel, safe_web_url
 
 
 @pytest.fixture(scope="module")
@@ -18,7 +18,7 @@ def tk_root(gui_app):
 
 @pytest.fixture
 def panel_factory(tk_root):
-    from polyrmc.gui.theme import apply
+    from continuum_spectranalytics.gui.theme import apply
 
     panels = []
 
@@ -158,7 +158,7 @@ def test_errors_replace_stale_sources_and_leave_search_available(panel_factory, 
 
 def test_result_selection_opens_original_and_copies_citation(panel_factory, tk_root, monkeypatch):
     opened = []
-    monkeypatch.setattr("polyrmc.gui.research.open_web_url", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("continuum_spectranalytics.gui.research.open_web_url", lambda url: opened.append(url) or True)
     panel = panel_factory(lambda _args: response())
     panel.query.insert(0, "a paper")
     panel.source.set("arXiv papers")

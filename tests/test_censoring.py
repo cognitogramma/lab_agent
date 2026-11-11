@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.tier0.censoring import (
+from continuum_spectranalytics.tier0.censoring import (
     apply_censoring,
     censor_saturation,
     contiguous_spans,

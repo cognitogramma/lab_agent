@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from polyrmc.state import AnomalyRecord, AnomalyType
-from polyrmc.tier0.splice import apply_splice, interpolate_bridged, render_segments
+from continuum_spectranalytics.state import AnomalyRecord, AnomalyType
+from continuum_spectranalytics.tier0.splice import apply_splice, interpolate_bridged, render_segments
 
 
 def _record(start, end, anomaly_type):

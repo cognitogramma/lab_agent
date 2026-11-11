@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.state import AnomalyType
-from polyrmc.tier0.classify import classify_all, classify_deterministic
-from polyrmc.tier0.detect import (
+from continuum_spectranalytics.state import AnomalyType
+from continuum_spectranalytics.tier0.classify import classify_all, classify_deterministic
+from continuum_spectranalytics.tier0.detect import (
     derivative_edges,
     detect_anomalies,
     hampel_outliers,
@@ -142,7 +142,7 @@ def test_saturation_region_is_classified_deterministically(noisy_trace):
 
 
 def test_ambiguous_regions_return_none_rather_than_a_guess():
-    from polyrmc.state import AnomalyRecord
+    from continuum_spectranalytics.state import AnomalyRecord
 
     record = AnomalyRecord(
         start_index=10,

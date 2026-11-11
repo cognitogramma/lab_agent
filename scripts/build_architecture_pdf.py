@@ -27,7 +27,7 @@ import fitz
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from polyrmc import paths  # noqa: E402
+from continuum_spectranalytics import paths  # noqa: E402
 
 PAGE = fitz.paper_rect("a4")
 MARGIN = 56
@@ -57,7 +57,7 @@ def figure(name: str, caption: str) -> str:
     if not path.exists():
         return (
             f'<p class="caption warn">[figure {name} not present; regenerate it '
-            f"with polyrmc, then rebuild this document]</p>"
+            f"with continuum-spectranalytics, then rebuild this document]</p>"
         )
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return (
@@ -68,7 +68,7 @@ def figure(name: str, caption: str) -> str:
 
 def document() -> str:
     return f"""
-<h1>PolyRMC</h1>
+<h1>Continuum Spectranalytics</h1>
 <p class="sub">An auditable pipeline for ACD light-scattering measurement,
 and the agent that drives it.</p>
 
@@ -111,7 +111,7 @@ correct in ten years when the model vendors have all changed.</p>
 
 <h2>3. Getting data in</h2>
 
-<p><code>polyrmc.tabular.open_table</code> recognises four kinds of file, tried
+<p><code>continuum_spectranalytics.tabular.open_table</code> recognises four kinds of file, tried
 in order, because the specific formats declare themselves and the general one
 cannot:</p>
 
@@ -168,7 +168,7 @@ taken at each unresolved design question. Schema version 2 adds declarations and
 the path register; an absent <code>paths</code> key means <i>not recorded</i>,
 which is a different fact from <i>no branches taken</i>.</p>
 
-<p><code>polyrmc.rehydrate</code> reads a finished run back from its CSV and
+<p><code>continuum_spectranalytics.rehydrate</code> reads a finished run back from its CSV and
 sidecar, well enough to redraw it, without reprocessing. Reprocessing under
 today's code is not the same act as reading what was recorded then.</p>
 
@@ -205,7 +205,7 @@ the cap is reported rather than hidden.</p>
 <p>The package ships no key and brokers no model access. One
 <code>ProviderSpec</code> table covers Gemini, Claude and OpenAI; with no
 <code>--provider</code> the session uses whichever is keyed.
-<code>polyrmc setup</code> takes a key and spends one small call to confirm it
+<code>continuum-spectranalytics setup</code> takes a key and spends one small call to confirm it
 opens a door, because the alternative is a researcher discovering a bad paste
 three questions into a session, where the failure looks like the agent.</p>
 
@@ -222,7 +222,7 @@ the session, says what was spent, and stops. Nothing committed is lost.</p>
 <tr><th>Category</th><th>The fix</th></tr>
 <tr><td>Out of quota or rate-limited</td><td>A bill, or a wait. Served as 403 by
 one vendor and 429 by another, so it is matched on meaning.</td></tr>
-<tr><td>Rejected key</td><td>A paste. <code>polyrmc setup</code>.</td></tr>
+<tr><td>Rejected key</td><td>A paste. <code>continuum-spectranalytics setup</code>.</td></tr>
 <tr><td>Stale model id</td><td>A <code>--model</code>, with the override
 named.</td></tr>
 <tr><td>Unreachable</td><td>A wait.</td></tr>
@@ -262,7 +262,7 @@ units, which is the most convincing wrong figure this package could produce.</p>
 
 <h2>10. What tier 0 actually does</h2>
 
-<p>Sixteen modules under <code>polyrmc/tier0/</code>, none of which imports
+<p>Sixteen modules under <code>continuum_spectranalytics/tier0/</code>, none of which imports
 anything above it:</p>
 
 <table>
@@ -366,7 +366,7 @@ the whole shape of this surface.</p>
 <h2>12. A run, end to end</h2>
 
 <ol>
-<li><code>polyrmc intake</code> &mdash; the experiment is declared. Nothing is
+<li><code>continuum-spectranalytics intake</code> &mdash; the experiment is declared. Nothing is
 inferred from the trace.</li>
 <li><code>load_run</code> &mdash; ingest and clean. Stops before the smoothing
 window.</li>
@@ -495,7 +495,7 @@ invented.</li>
 
 <h2>Appendix D &mdash; module map</h2>
 
-<pre>src/polyrmc/
+<pre>src/continuum_spectranalytics/
   tier0/        deterministic computation; imports nothing above it
   tier1/        judged decisions (ModelJudge, StaticJudge)
   tier2/        orchestration entry points
@@ -576,7 +576,7 @@ def render(html: str, out_path: Path, css: str = CSS) -> int:
 
 
 def main() -> int:
-    out_path = paths.project_root() / "docs" / "polyrmc-architecture.pdf"
+    out_path = paths.project_root() / "docs" / "continuum-spectranalytics-architecture.pdf"
     pages = render(document(), out_path)
     print(f"wrote {paths.relative_to_root(out_path)} ({pages} pages)")
     return 0

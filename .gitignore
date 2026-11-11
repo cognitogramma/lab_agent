@@ -1,6 +1,7 @@
 .env
 filesystem-permissions.json
 *.polyrmc-backup-*
+*.continuum-spectranalytics-backup-*
 __pycache__/
 *.pyc
 .pytest_cache/

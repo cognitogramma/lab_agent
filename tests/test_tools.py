@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.state import AnomalyRecord, AnomalyType, Candidate, Conflict, LoopState
-from polyrmc.tools import Rejected, ToolSurface
-from polyrmc.tier0.anchors import propose_anchors
+from continuum_spectranalytics.state import AnomalyRecord, AnomalyType, Candidate, Conflict, LoopState
+from continuum_spectranalytics.tools import Rejected, ToolSurface
+from continuum_spectranalytics.tier0.anchors import propose_anchors
 
 RNG = np.random.default_rng(7)
 NOISE = 0.002
@@ -15,7 +15,7 @@ NOISE = 0.002
 
 @pytest.fixture
 def surface(run_config):
-    from polyrmc.state import RunState
+    from continuum_spectranalytics.state import RunState
 
     time_s = np.arange(0.0, 4000.0, 1.0)
     signal = (

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from polyrmc.memory.notes import NoteBook
+from continuum_spectranalytics.memory.notes import NoteBook
 
 
 def test_a_note_survives_the_session(tmp_path: Path):
@@ -116,7 +116,7 @@ def test_a_failed_idea_save_does_not_remain_in_memory(tmp_path: Path, monkeypatc
 
 @pytest.mark.parametrize("failure", ["partial_write", "replace"])
 def test_failed_persistence_preserves_prior_ideas(tmp_path: Path, monkeypatch, failure):
-    from polyrmc.memory import notes as notes_module
+    from continuum_spectranalytics.memory import notes as notes_module
 
     book = NoteBook(tmp_path)
     book.add_research_idea("Prior idea", "An existing hypothesis.", "Arnold")

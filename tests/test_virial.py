@@ -5,14 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.state import FitResult
-from polyrmc.tier0.optics import (
+from continuum_spectranalytics.state import FitResult
+from continuum_spectranalytics.tier0.optics import (
     alpha_from_known_mw,
     alpha_from_toluene,
     optical_constant,
     rayleigh_ratio,
 )
-from polyrmc.tier0.virial import build_kc_over_i, derive_parameters, fit_virial
+from continuum_spectranalytics.tier0.virial import build_kc_over_i, derive_parameters, fit_virial
 
 from conftest import TRUE_A2, TRUE_MW
 

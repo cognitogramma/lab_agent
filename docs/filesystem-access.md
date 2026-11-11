@@ -43,7 +43,7 @@ Examples to type into the GUI (substitute your own paths):
 Writes and directory creation use the existing commit approval dialog. Existing
 `--auto-approve` and session-level “always allow” behavior still applies. A
 replacement requires the hash returned by `read_file`, rejects stale versions,
-and saves the original beside the file as `.polyrmc-backup-<id>`. Writes are
+and saves the original beside the file as `.continuum-spectranalytics-backup-<id>`. Writes are
 staged before publication. There are no delete or execute tools.
 
 Text uses UTF-8; binary data can be read/written as base64. Reads return 32 KiB
@@ -60,5 +60,5 @@ other software running as your Windows user is not constrained by this file.
 Concurrent changes by another process between a path check and disk I/O are
 not isolated by this policy. Use OS isolation if that threat matters.
 
-Restart PolyRMC after installing the feature to load the new tool definitions.
+Restart Continuum Spectranalytics after installing the feature to load the new tool definitions.
 Subsequent policy-file changes take effect on the next file operation.

@@ -8,8 +8,8 @@ import time
 
 import pytest
 
-from polyrmc.gui.literature import LiteraturePanel
-from polyrmc.gui.theme import build_fonts
+from continuum_spectranalytics.gui.literature import LiteraturePanel
+from continuum_spectranalytics.gui.theme import build_fonts
 
 
 def pump(root, until, timeout=5):

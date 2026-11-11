@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuum-spectranalytics"
-version = "0.1.0"
+version = "0.2.0"
 description = "Literature review, durable research ideas, and auditable light-scattering analysis"
 requires-python = ">=3.11"
 dependencies = [
@@ -49,16 +49,19 @@ search = ["ddgs>=9.0,<10"]
 gui = ["customtkinter>=5.2,<6"]
 
 all = ["continuum-spectranalytics[gemini,claude,openai,test,search,gui]"]
+windows-build = ["continuum-spectranalytics[gemini,claude,openai,search,gui]", "pyinstaller>=6.22.3,<7"]
 
 [project.scripts]
-continuum = "polyrmc.cli:main"
-polyrmc = "polyrmc.cli:main"
+continuum-spectranalytics = "continuum_spectranalytics.cli:main"
 
 [project.urls]
 Repository = "https://github.com/cognitogramma/lab_agent"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+continuum_spectranalytics = ["agent/prompts/*.md", "assets/*.ico"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

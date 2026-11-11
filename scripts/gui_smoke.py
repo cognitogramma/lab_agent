@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from dotenv import load_dotenv
 
-from polyrmc import paths
+from continuum_spectranalytics import paths
 
 DEFAULTS = dict(
     provider=None,
@@ -44,7 +44,7 @@ DEFAULTS = dict(
 
 def main(argv: list[str]) -> int:
     load_dotenv(paths.env_file())
-    from polyrmc.gui.app import Workbench
+    from continuum_spectranalytics.gui.app import Workbench
 
     window = Workbench(SimpleNamespace(**DEFAULTS))
     # Pumped rather than driven: the session opens itself from a scheduled

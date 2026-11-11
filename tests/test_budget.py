@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.agent.budget import (
+from continuum_spectranalytics.agent.budget import (
     RATES_ENV,
     Budget,
     BudgetExceeded,

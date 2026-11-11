@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.gui.shell import _Artwork
-from polyrmc.gui.theme import build_fonts
+from continuum_spectranalytics.gui.shell import _Artwork
+from continuum_spectranalytics.gui.theme import build_fonts
 
 
 @pytest.mark.parametrize("kind", ["open", "research", "runs", "hero"])

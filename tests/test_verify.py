@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from polyrmc.pipeline import run_part1
-from polyrmc.state import Conflict, Declaration
-from polyrmc.verify import summarize, verify_output
+from continuum_spectranalytics.pipeline import run_part1
+from continuum_spectranalytics.state import Conflict, Declaration
+from continuum_spectranalytics.verify import summarize, verify_output
 
 
 @pytest.fixture

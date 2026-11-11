@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.config import SmoothingConfig
-from polyrmc.tier0 import smoothing as smoothing_module
-from polyrmc.tier0.smoothing import (
+from continuum_spectranalytics.config import SmoothingConfig
+from continuum_spectranalytics.tier0 import smoothing as smoothing_module
+from continuum_spectranalytics.tier0.smoothing import (
     candidate_windows,
     conservative_window,
     find_landmarks,
@@ -166,7 +166,7 @@ def test_changepoint_search_stays_fast_on_a_long_trace(rng):
     """The real target file is ~79,000 rows; the search decimates to stay usable."""
     import time as time_module
 
-    from polyrmc.tier0.detect import pelt_changepoints
+    from continuum_spectranalytics.tier0.detect import pelt_changepoints
 
     long_signal = np.concatenate([rng.normal(0, 1.0, 40000), rng.normal(8, 1.0, 40000)])
     started = time_module.perf_counter()

@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 import pytest
 
-from polyrmc.config import RunConfig
-from polyrmc.memory.registry import RunRegistry, RunSummary, summary_from_sidecar
-from polyrmc.state import RunState
-from polyrmc.tools import ToolSurface
+from continuum_spectranalytics.config import RunConfig
+from continuum_spectranalytics.memory.registry import RunRegistry, RunSummary, summary_from_sidecar
+from continuum_spectranalytics.state import RunState
+from continuum_spectranalytics.tools import ToolSurface
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ def test_registry_comparison(mock_provenance_dir: Path):
 
 
 def test_tool_surface_historical_methods(mock_provenance_dir: Path):
-    from polyrmc.cli import load_config
+    from continuum_spectranalytics.cli import load_config
     state = RunState(run_id="current_run", source_file="data/raw/current.csv")
     config = load_config("examples/run_config.example.json")
     tools = ToolSurface(state=state, config=config)

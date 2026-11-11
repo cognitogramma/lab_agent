@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from polyrmc.io_csv import read_processed_csv
+from continuum_spectranalytics.io_csv import read_processed_csv
 
 # Written in this order; time first so a plotting package offers it as x.
 COLUMNS = (

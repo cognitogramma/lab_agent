@@ -1,7 +1,7 @@
 """A run you have not declared anything about.
 
 Declaring a run used to be a gate you passed before you could open it: a
-declarations file, written by ``polyrmc intake``, or nothing happened. That gate
+declarations file, written by ``continuum-spectranalytics intake``, or nothing happened. That gate
 bought less than it looked like it did. A session started without one was
 scaffolded from ``examples/run_config.example.json``, so ``dn_dc`` was silently
 0.150 -- and a protein run taken all the way through would have reported a molar
@@ -24,11 +24,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from polyrmc.agent.toolspec import build_registry
-from polyrmc.cli import open_session
-from polyrmc.config import OpticalConfig, RunConfig
-from polyrmc.tier0.optics import UndeclaredConstant, optical_constant
-from polyrmc.tools import Rejected
+from continuum_spectranalytics.agent.toolspec import build_registry
+from continuum_spectranalytics.cli import open_session
+from continuum_spectranalytics.config import OpticalConfig, RunConfig
+from continuum_spectranalytics.tier0.optics import UndeclaredConstant, optical_constant
+from continuum_spectranalytics.tools import Rejected
 
 
 def session_args(raw, tmp_path, **over):
@@ -165,8 +165,8 @@ def test_a2_mw_survives_an_undeclared_dn_dc(virial_argen_file, tmp_path, optical
     would withhold two correct numbers to punish a missing answer they never
     depended on.
     """
-    from polyrmc.config import RunConfig
-    from polyrmc.pipeline import run_part1, run_part2
+    from continuum_spectranalytics.config import RunConfig
+    from continuum_spectranalytics.pipeline import run_part1, run_part2
 
     declared = RunConfig(
         run_id="declared", source_file=virial_argen_file,

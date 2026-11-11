@@ -32,9 +32,9 @@ from pathlib import Path
 # Runnable from a checkout without installing the package.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from polyrmc import cli  # noqa: E402
-from polyrmc.agent.budget import Usage  # noqa: E402
-from polyrmc.agent.toolcall import AssistantTurn, ToolCall  # noqa: E402
+from continuum_spectranalytics import cli  # noqa: E402
+from continuum_spectranalytics.agent.budget import Usage  # noqa: E402
+from continuum_spectranalytics.agent.toolcall import AssistantTurn, ToolCall  # noqa: E402
 
 RAW = "data/raw/example_argen.txt"
 DECLARATIONS = "examples/example_argen.decl.json"
@@ -114,7 +114,7 @@ def build_plan(surface):
             raise SystemExit(
                 "the sweep produced no safe band, so there is no window to "
                 "choose and this sample cannot continue. Run "
-                "`polyrmc process` on the same file to see why."
+                "`continuum-spectranalytics process` on the same file to see why."
             )
         return found
 
@@ -245,7 +245,7 @@ def main() -> int:
     # The surface the session mutates is built inside run_agent and handed to
     # the orchestrator. Intercepting that construction is how the plan gets the
     # real one; run_agent stays unaware that a planned provider exists.
-    from polyrmc.agent import orchestrator as orchestrator_module
+    from continuum_spectranalytics.agent import orchestrator as orchestrator_module
 
     real = orchestrator_module.Orchestrator
 

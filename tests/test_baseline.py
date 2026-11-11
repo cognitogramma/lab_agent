@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polyrmc.tier0.baseline import (
+from continuum_spectranalytics.tier0.baseline import (
     asls_baseline,
     correct_drift,
     polynomial_baseline,
