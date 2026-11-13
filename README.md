@@ -1,40 +1,41 @@
 # Continuum Spectranalytics
 
-A research workspace for **literature review and durable research ideas**, with
-an auditable light-scattering pipeline for experimental data.
-
-The research agent finds and reads sources, compares claims with prior lab
-work, identifies gaps, and keeps hypotheses and next steps in a searchable
-notebook. Its moat is the growing connection between reviewed literature,
-research ideas, and experimental evidence across sessions.
+A Windows research workspace for finding and reviewing papers, keeping a
+searchable notebook of research ideas, and analyzing ARGEN light-scattering
+data with a record of how each result was produced.
 
 ## Download for Windows
 
-1. On a 64-bit Windows PC, download `Continuum-Spectranalytics.exe` from the
-   **Assets** section of the [v0.2.0 GitHub release](https://github.com/cognitogramma/lab_agent/releases/tag/v0.2.0).
-2. Double-click the downloaded file in File Explorer. The standalone app
-   includes Python and its dependencies.
+1. On a 64-bit Windows PC, download the [Windows executable](https://github.com/cognitogramma/lab_agent/releases/download/v0.2.0/Continuum-Spectranalytics.exe)
+   (about 120 MB).
+2. In File Explorer, double-click `Continuum-Spectranalytics.exe`. The app opens
+   directly and includes Python and its dependencies.
 
 The executable is unsigned. If Windows blocks it on a Tulane-managed computer,
-contact Tulane IT for help. The app stores settings, ideas, the reading list,
-subagent definitions, and run data under
-`%LOCALAPPDATA%\Continuum Spectranalytics`.
+contact Tulane IT for help. [Release notes and checksum](https://github.com/cognitogramma/lab_agent/releases/tag/v0.2.0)
 
-**Literature** searches public sources and keeps a saved reading list.
-**Ideas & notes** saves ideas locally, including evidence, source links, and a
-next step, and retrieves earlier work without needing a model key. In the
-assistant, `save_research_idea` and `read_research_ideas` use that same notebook.
-Ideas are labelled hypotheses rather than established findings.
+## Quick start
 
-For optional AI features, open **Research assistant > Model settings**. Choose
-Gemini, Claude, or OpenAI, enter your provider API key, and select **Use this
-key**. Provider usage charges may apply. Search, reading-list storage, and
-manual idea capture work without a model key. Notebook records, saved papers,
-keys, and session logs are local and excluded from Git.
+1. Open **Literature** and search for `light scattering second virial coefficient`
+   using **Find related papers**.
+2. Select a result and choose **Read page** or **Open original** to inspect the
+   source. Choose **Save paper** to add it to your reading list.
+3. Open **Ideas & notes > New research idea** to record a hypothesis, source
+   links, and a next step.
 
-From source, the Python package is `continuum_spectranalytics` and the command
-is `continuum-spectranalytics`. `CONTINUUM_SPECTRANALYTICS_ROOT` can point the
-app at an existing workspace. Legacy `POLYRMC_*` settings still load.
+These steps work without a model API key. To use the assistant or create a
+specialist, open **Research assistant > Model settings**, choose Gemini, Claude,
+or OpenAI, enter your provider API key, and select **Use this key**. Provider
+usage charges may apply. Try asking, “Find two public papers on the second
+virial coefficient in light scattering, compare their methods, and cite your
+sources.”
+
+For instrument data, press **Ctrl+O** to open a raw ARGEN file. The
+[run guide](#opening-a-run-and-what-you-have-to-declare) lists the experimental
+details needed for each calculation.
+
+The app stores settings, notes, the reading list, specialist definitions, and
+run data under `%LOCALAPPDATA%\Continuum Spectranalytics`.
 
 ## Specialized subagents
 
@@ -72,6 +73,10 @@ The build produces `dist\Continuum Spectranalytics.exe`. It bundles the default
 lab context and agent prompts. User settings, credentials, and research data
 are stored separately. For source development, run
 `continuum-spectranalytics gui` or `./Start-Continuum-Spectranalytics.ps1`.
+
+The Python package is `continuum_spectranalytics`. Set
+`CONTINUUM_SPECTRANALYTICS_ROOT` to point the app at an existing workspace.
+Legacy `POLYRMC_*` settings still load.
 
 Agent access to local files can be configured in `filesystem-permissions.json`.
 See [filesystem access](docs/filesystem-access.md) for setup, exclusions, backups,
@@ -228,8 +233,8 @@ run beside it instead of recalled on demand.
 The desktop has an ink-blue and copper research-studio design, a compact
 workspace rail, and independent workflow panels for data, reading, and memory.
 Source search sits in the workspace header and session status stays in a slim
-footer. **Lab assistant** opens a contextual drawer when needed. The rail opens
-Workbench, Literature, Visuals, Experiments, Notebook, and Toolbox. Research puts sources
+footer. **Research assistant** opens a contextual drawer when needed. The rail opens
+Workbench, Literature, Visuals, Experiments, Ideas & notes, and Toolbox. Research puts sources
 beside their preview on wide screens and stacks them at narrower widths.
 Times New Roman headings and body text use installed serif fallbacks.
 
@@ -242,7 +247,8 @@ python -m pip install -e ".[gui,search]"
 The presentation lives in `gui/theme.py`, `gui/layout.py`, and `gui/shell.py`,
 so later visual changes do not require changes to the measurement or search logic.
 
-Use **Open experiment** in the sidebar/header or **Model settings** inside the assistant.
+Use **Menu > Session > Open a run...** to open an experiment or **Model settings**
+inside the assistant to connect a model.
 **Ctrl+J** shows or hides the assistant, **Ctrl+L** opens it and focuses the
 question box, **Ctrl+O** opens a run, and **Ctrl+K** focuses research. The
 **Menu** dropdown contains Session, View, and Help; **View > Reset workspace**
@@ -320,7 +326,7 @@ citations. A supplied URL can be read directly. The existing orchestrator
 passes each result back to the model to choose its next action; it does not
 impose a search-and-read pipeline.
 
-For example, connect a model in **Lab assistant > Model settings**, then ask:
+For example, connect a model in **Research assistant > Model settings**, then ask:
 
 > Find two public references on the second virial coefficient in light
 > scattering. Read the original sources, compare their explanations, and cite
