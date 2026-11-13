@@ -41,5 +41,3 @@ sessions. [Creating a specialist](docs/reference.md#specialized-subagents)
 - [Working from a source checkout](docs/LAB-SETUP.md)
 - [Building the Windows executable](docs/reference.md#build-the-windows-app)
 - [Technical reference and known limitations](docs/reference.md)
-
-Tulane University · Advised by Prof. Wayne F. Reed

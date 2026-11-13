@@ -49,8 +49,6 @@ An auditable analysis pipeline for automatic continuous dilution (ACD)
 light-scattering data, with subjective analysis decisions encoded as explicit,
 reviewable logic rather than left in an analyst's head.
 
-Tulane University · Continuum Spectranalytics · Advisor: Prof. Wayne F. Reed
-
 Turns a raw ARGEN trace into weight-average molar mass, second virial
 coefficient A₂, and the diffusion interaction parameter k_D — recording, for
 every number, how it was produced.
