@@ -71,6 +71,17 @@ extract, with reads in between -- and short enough that a model looping on a
 refusal it will not read gets stopped while the researcher is still watching.
 """
 
+STALE_RESULT_CHARS = 1500
+"""How much of a tool result from an *earlier* question is resent to the model.
+
+Web pages, file pages and tables are the bulk of a long conversation, and the
+whole history is resent on every round. Results from the question being worked
+on now go out in full; once the researcher asks something new, older results
+are cut to this length with a note saying so. The full text stays in
+``messages`` and ``trace`` -- only what is sent is shortened -- and the cut is
+deterministic, so the shortened prefix is identical every round and caches.
+"""
+
 NETWORK_TOOLS = frozenset({"search_internet", "read_web_page", "review_literature"})
 DEFAULT_MAX_WEB_CALLS = 8
 MAX_SUBAGENT_RUNS = 3
@@ -264,6 +275,8 @@ class Orchestrator:
         self.lab_context, self.lab_path = load_lab_context()
         self.system_prompt = system_prompt or default_system_prompt()
         self.messages: list[Message] = []
+        # Index in ``messages`` where the current researcher question began.
+        self._turn_start = 0
         self.schemas = as_openai_tools(schemas_for(self.registry))
         # Every call attempted this session, with its outcome. The narration a
         # researcher reads is generated from this rather than authored, so what
@@ -303,6 +316,7 @@ class Orchestrator:
         yield Event("spend", _spend_line(turn_usage, self.budget))
 
     def _stream(self, user_text: str) -> Iterator[Event]:
+        self._turn_start = len(self.messages)
         self.messages.append(Message(role="user", text=user_text))
         self._web_calls_used = 0
         self._subagents_run = 0
@@ -391,7 +405,16 @@ class Orchestrator:
         return list(self.stream(user_text))
 
     def _converse(self) -> AssistantTurn:
-        return self.provider.converse(self.system_prompt, self.messages, self.schemas)
+        return self.provider.converse(self.system_prompt, self._outgoing(), self.schemas)
+
+    def _outgoing(self) -> list[Message]:
+        """The history as sent: earlier questions' tool results shortened."""
+        outgoing: list[Message] = []
+        for index, message in enumerate(self.messages):
+            if index < self._turn_start and message.role == "tool":
+                message = replace(message, results=[_compact(r) for r in message.results])
+            outgoing.append(message)
+        return outgoing
 
     def _run_subagent(self, context: ToolContext, args: dict[str, Any]) -> str:
         if self._subagents_run >= MAX_SUBAGENT_RUNS:
@@ -532,6 +555,17 @@ class Orchestrator:
             for call, result in self.trace
             if result.ok and (t := self.registry.get(call.name)) is not None and t.mutating
         ]
+
+
+def _compact(result: ToolResult) -> ToolResult:
+    if len(result.content) <= STALE_RESULT_CHARS:
+        return result
+    cut = len(result.content) - STALE_RESULT_CHARS
+    return replace(
+        result,
+        content=result.content[:STALE_RESULT_CHARS]
+        + f"\n[... {cut:,} more characters from an earlier question omitted; call the tool again if needed]",
+    )
 
 
 def _spend_line(turn: Usage, budget: Budget) -> str:

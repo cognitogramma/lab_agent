@@ -2,7 +2,7 @@ from pathlib import Path
 import sysconfig
 import tomllib
 
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 from PyInstaller.utils.win32 import versioninfo
 
 
@@ -46,9 +46,13 @@ for distribution in ("langchain-core", "langchain-openai", "langchain-anthropic"
                      "langchain-google-genai", "openai", "anthropic", "google-genai", "urllib3"):
     datas += copy_metadata(distribution)
 
+# tkinterdnd2 loads the native tkdnd extension from its package folder at run time.
+datas += collect_data_files("tkinterdnd2")
+
 # LangChain and Google resolve some public objects on demand. tiktoken discovers plugins.
 hidden_imports = collect_submodules("langchain_core") + collect_submodules("google.genai")
 hidden_imports.append("tiktoken_ext.openai_public")
+hidden_imports.append("tkinterdnd2")
 
 analysis = Analysis(
     [str(Path(SPECPATH) / "launch.py")],

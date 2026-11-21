@@ -111,6 +111,7 @@ class Workbench(ctk.CTk):
 
         self._build_menu()
         self._build_layout()
+        self._enable_file_drops()
         self._log_warnings()
 
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -120,6 +121,7 @@ class Workbench(ctk.CTk):
         self.bind("<Escape>", self._escape)
         self.bind("<Control-k>", lambda _e: self.show_research())
         self.bind("<Control-o>", self._open_run_shortcut)
+        self.bind("<Control-O>", lambda _e: (self.choose_attachments(), "break")[1])
         self.bind("<Control-l>", lambda _e: self.show_assistant())
         self.bind("<Control-j>", lambda _e: self.toggle_assistant())
         self._pump_id = self.after(POLL_MS, self._pump)
@@ -131,7 +133,9 @@ class Workbench(ctk.CTk):
         bar = tk.Menu(self, tearoff=0)
         session = tk.Menu(bar, tearoff=0)
         session.add_command(label="Open a run...", command=self.open_run, accelerator="Ctrl+O")
-        session.add_command(label="Provider and key...", command=self.sign_in)
+        session.add_command(label="Attach a file...", command=self.choose_attachments,
+                            accelerator="Ctrl+Shift+O")
+        session.add_command(label="Model and key...", command=self.sign_in)
         session.add_command(label="File permissions...", command=self.show_file_permissions)
         session.add_separator()
         session.add_command(label="Copy the transcript", command=self.copy_transcript)
@@ -188,6 +192,58 @@ class Workbench(ctk.CTk):
         from continuum_spectranalytics.gui.layout import build_layout
 
         build_layout(self)
+
+    # --- attaching files ---------------------------------------------------
+
+    def _enable_file_drops(self) -> None:
+        """Accept files dragged from Explorer anywhere on the window."""
+        from continuum_spectranalytics.gui import dropfiles
+
+        self.drops_enabled = dropfiles.enable(self)
+        if not self.drops_enabled:
+            return
+
+        def every(widget):
+            yield widget
+            for child in widget.winfo_children():
+                if not isinstance(child, (tk.Toplevel, tk.Menu)):
+                    yield from every(child)
+
+        dropfiles.register(self, every(self), self.attach_files)
+
+    def choose_attachments(self) -> None:
+        from tkinter import filedialog
+
+        chosen = filedialog.askopenfilenames(parent=self, title="Attach files for the assistant")
+        if chosen:
+            self.attach_files(list(chosen))
+
+    def attach_files(self, raw_paths) -> None:
+        """Give the assistant read access to these files and mention them in the draft.
+
+        Dropping a file is the researcher saying "use this", so it is readable
+        for the rest of the session whatever filesystem-permissions.json says.
+        Protected locations and credential files are still refused.
+        """
+        from continuum_spectranalytics.tools import Rejected
+
+        attached: list[str] = []
+        for raw in raw_paths:
+            try:
+                attached.append(str(self.session.context.files.grant(raw)))
+            except (Rejected, OSError) as error:
+                self.transcript.block("cannot attach that file", f"{raw}\n{error}", "declined")
+        if not attached:
+            return
+        self.show_assistant()
+        current = self.entry.get("1.0", "end-1c")
+        lines = "\n".join(f"Attached file: {path}" for path in attached)
+        prefix = "" if not current.strip() else ("\n" if not current.endswith("\n") else "")
+        self.entry.insert("end", f"{prefix}{lines}\n")
+        self.entry.see("end")
+        self.entry.focus_set()
+        names = ", ".join(Path(path).name for path in attached)
+        self.transcript.note(f"attached {names} -- the assistant can read it this session.")
 
     def reset_layout(self) -> None:
         self.hide_assistant()
@@ -726,21 +782,27 @@ class Workbench(ctk.CTk):
 
     def sign_in(self) -> None:
         from continuum_spectranalytics.agent.toolcall import SPECS, keyed_providers
-        from continuum_spectranalytics.cli import _persist_key
+        from continuum_spectranalytics.cli import _persist_key, _persist_setting
 
-        chosen = SignInDialog.put(self, self.fonts, SPECS, keyed_providers())
+        current = (self.provider.name, self.provider.model) if self.provider is not None else None
+        chosen = SignInDialog.put(self, self.fonts, SPECS, keyed_providers(), current)
         if chosen is None:
             return
-        kind, value, save = chosen
+        kind, value, save, model = chosen
         spec = SPECS[kind]
         import os
 
-        os.environ[spec.canonical_key] = value
-        if save and _persist_key(spec, value):
-            self.transcript.note(
-                f"key written to {paths.env_file()} as {spec.canonical_key}. It is gitignored."
-            )
+        if value:
+            os.environ[spec.canonical_key] = value
+            if save and _persist_key(spec, value):
+                self.transcript.note(
+                    f"key written to {paths.env_file()} as {spec.canonical_key}. It is gitignored."
+                )
+        os.environ[spec.model_env] = model
+        if save:
+            _persist_setting(spec.model_env, model)
         self.args.provider = kind
+        self.args.model = model
         self._connect(announce=True)
         if self.provider is not None:
             # Signing in is how a session recovers from a spent key, so it has
@@ -775,6 +837,12 @@ class Workbench(ctk.CTk):
             return
 
         self.research_panel.context_changed()
+        # Files attached earlier stay attached when a run is opened.
+        for granted in self.session.context.files.granted:
+            try:
+                opened.context.files.grant(granted)
+            except Exception:  # noqa: BLE001 - a moved file is simply dropped
+                pass
         self.session = opened
         self.research_panel.refresh_context()
         self.args = nominated

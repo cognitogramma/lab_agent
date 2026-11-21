@@ -928,9 +928,13 @@ class SignInDialog(tk.Toplevel):
     a normal place to run this and a key written there outlives the session.
     """
 
-    def __init__(self, parent, fonts: Fonts, specs: dict, keyed: Sequence[str]) -> None:
+    def __init__(self, parent, fonts: Fonts, specs: dict, keyed: Sequence[str],
+                 current: tuple[str, str] | None = None) -> None:
         super().__init__(parent)
-        self.result: tuple[str, str, bool] | None = None
+        # (provider, key or "" to keep the saved one, save to .env, model id)
+        self.result: tuple[str, str, bool, str] | None = None
+        self.keyed = set(keyed)
+        self.current = current
         p = PALETTE
         self.title("Bring your own tokens")
         self.configure(background=p.panel)
@@ -953,7 +957,8 @@ class SignInDialog(tk.Toplevel):
             anchor="w", justify="left",
         ).pack(fill="x", pady=(4, 12))
 
-        self.choice = tk.StringVar(value=(list(keyed) or list(specs))[0])
+        first = current[0] if current and current[0] in specs else (list(keyed) or list(specs))[0]
+        self.choice = tk.StringVar(value=first)
         for name, spec in specs.items():
             row = tk.Frame(wrap, background=p.panel)
             row.pack(fill="x", pady=1)
@@ -967,6 +972,14 @@ class SignInDialog(tk.Toplevel):
                 foreground=p.settled if name in keyed else p.faint, anchor="w",
             ).pack(side="left")
 
+        tk.Label(
+            wrap, text="Model  (pick one, or type any model id your key can use)",
+            font=fonts.small, background=p.panel, foreground=p.quiet, anchor="w",
+        ).pack(fill="x", pady=(12, 2))
+        self.model = tk.StringVar()
+        self.model_box = ttk.Combobox(wrap, textvariable=self.model, font=fonts.mono, width=50)
+        self.model_box.pack(fill="x", pady=(2, 0))
+
         self.where = tk.Label(
             wrap, text="", font=fonts.small, background=p.panel,
             foreground=p.accent, anchor="w", cursor="hand2",
@@ -975,17 +988,21 @@ class SignInDialog(tk.Toplevel):
         self.where.bind("<Button-1>", lambda _e: self._browse())
 
         self.entry = ttk.Entry(wrap, show="•", font=fonts.mono, width=52)
-        self.entry.pack(fill="x", pady=(2, 6))
+        self.entry.pack(fill="x", pady=(2, 2))
+        self.key_hint = tk.Label(
+            wrap, text="", font=fonts.small, background=p.panel, foreground=p.faint, anchor="w",
+        )
+        self.key_hint.pack(fill="x", pady=(0, 6))
         self.save = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            wrap, text="save it to .env for next time (gitignored)", variable=self.save
+            wrap, text="save key and model to .env for next time (gitignored)", variable=self.save
         ).pack(anchor="w")
 
         buttons = tk.Frame(wrap, background=p.panel)
         buttons.pack(fill="x", pady=(16, 0))
         ttk.Button(buttons, text="Skip", command=self._skip).pack(side="right")
         ttk.Button(
-            buttons, text="Use this key", style="Accent.TButton", command=self._accept
+            buttons, text="Use this model", style="Accent.TButton", command=self._accept
         ).pack(side="right", padx=6)
 
         self._retarget()
@@ -996,8 +1013,26 @@ class SignInDialog(tk.Toplevel):
         self.grab_set()
 
     def _retarget(self) -> None:
-        spec = self.specs[self.choice.get()]
+        import os
+
+        name = self.choice.get()
+        spec = self.specs[name]
         self.where.configure(text=f"get a key: {spec.key_url}")
+        choices = list(getattr(spec, "suggested_models", ()) or ())
+        if spec.default_model not in choices:
+            choices.insert(0, spec.default_model)
+        if self.current and self.current[0] == name and self.current[1]:
+            selected = self.current[1]
+        else:
+            selected = os.environ.get(spec.model_env) or spec.default_model
+        if selected not in choices:
+            choices.insert(0, selected)
+        self.model_box.configure(values=choices)
+        self.model.set(selected)
+        self.key_hint.configure(
+            text="a key is already set -- leave blank to keep it" if name in self.keyed
+            else "paste your API key"
+        )
 
     def _browse(self) -> None:
         import webbrowser
@@ -1005,11 +1040,13 @@ class SignInDialog(tk.Toplevel):
         webbrowser.open(self.specs[self.choice.get()].key_url)
 
     def _accept(self) -> None:
+        name = self.choice.get()
         value = self.entry.get().strip()
-        if not value:
-            self._skip()
+        model = self.model.get().strip() or self.specs[name].default_model
+        if not value and name not in self.keyed:
+            self.key_hint.configure(text=f"{name} needs an API key before it can be used")
             return
-        self.result = (self.choice.get(), value, bool(self.save.get()))
+        self.result = (name, value, bool(self.save.get()), model)
         self.destroy()
 
     def _skip(self) -> None:
@@ -1017,8 +1054,9 @@ class SignInDialog(tk.Toplevel):
         self.destroy()
 
     @classmethod
-    def put(cls, parent, fonts: Fonts, specs: dict, keyed: Sequence[str]):
-        dialog = cls(parent, fonts, specs, keyed)
+    def put(cls, parent, fonts: Fonts, specs: dict, keyed: Sequence[str],
+            current: tuple[str, str] | None = None):
+        dialog = cls(parent, fonts, specs, keyed, current)
         parent.wait_window(dialog)
         return dialog.result
 

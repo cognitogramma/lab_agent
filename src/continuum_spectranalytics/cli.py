@@ -451,6 +451,13 @@ REPL_HELP = """\
   /exit             end the session"""
 
 
+def _persist_setting(name: str, value: str, env_path: Path | None = None) -> bool:
+    """Write one ``NAME=value`` line into ``.env``, replacing any earlier one."""
+    from types import SimpleNamespace
+
+    return _persist_key(SimpleNamespace(canonical_key=name), value, env_path)
+
+
 def _persist_key(spec, value: str, env_path: Path | None = None) -> bool:
     """Write one key into ``.env``, replacing any existing line for it.
 

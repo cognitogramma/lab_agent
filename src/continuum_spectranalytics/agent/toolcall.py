@@ -70,6 +70,9 @@ class ProviderSpec:
     model_env: str
     pip_name: str
     key_url: str
+    # Offered in Model settings. The list is a convenience, not a limit: the
+    # field is editable, so any id the provider accepts can be typed in.
+    suggested_models: tuple[str, ...] = ()
 
     @property
     def canonical_key(self) -> str:
@@ -87,14 +90,17 @@ SPECS: dict[str, ProviderSpec] = {
         model_env="GEMINI_MODEL",
         pip_name="langchain-google-genai",
         key_url="https://aistudio.google.com/apikey",
+        suggested_models=("gemini-3.6-flash",),
     ),
     "claude": ProviderSpec(
         name="claude",
         env_keys=("ANTHROPIC_API_KEY",),
-        default_model="claude-sonnet-5",
+        default_model="claude-sonnet-5-5",
         model_env="ANTHROPIC_MODEL",
         pip_name="langchain-anthropic",
         key_url="https://console.anthropic.com/settings/keys",
+        # Haiku is the fastest and cheapest; Opus the most capable and slowest.
+        suggested_models=("claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"),
     ),
     "openai": ProviderSpec(
         name="openai",
@@ -103,6 +109,7 @@ SPECS: dict[str, ProviderSpec] = {
         model_env="OPENAI_MODEL",
         pip_name="langchain-openai",
         key_url="https://platform.openai.com/api-keys",
+        suggested_models=("gpt-5", "gpt-5-mini"),
     ),
 }
 
@@ -323,7 +330,7 @@ class LangChainToolProvider:
         if waited < self.min_interval:
             self.sleep(self.min_interval - waited)
 
-    def _invoke(self, bound: Any, payload: list[Any]) -> Any:
+    def _invoke(self, bound: Any, payload: list[Any], **kwargs: Any) -> Any:
         """One request, waiting out a rate limit rather than dying to it.
 
         This is the single exception to "the session does not retry", and it is
@@ -341,7 +348,7 @@ class LangChainToolProvider:
             self._pace()
             try:
                 self._last_call = self.clock()
-                return bound.invoke(payload)
+                return bound.invoke(payload, **kwargs)
             except Exception as error:  # provider SDKs raise their own types
                 failure = classify_provider_error(error, self.name, self.model)
                 if failure.rate_limited and attempt < self.max_rate_limit_waits:
@@ -368,8 +375,23 @@ class LangChainToolProvider:
         from langchain_core.messages import SystemMessage
 
         bound = self.client.bind_tools(list(tools)) if tools else self.client
-        payload = [SystemMessage(content=system), *self._to_langchain(messages)]
-        reply = self._invoke(bound, payload)
+        if self.name == "claude":
+            # Prompt caching. Every round resends the same ~10k tokens of
+            # instructions and tool definitions, plus a history that only grows.
+            # A breakpoint on the system block caches tools + system (they
+            # precede it in Anthropic's cache order); the request-level
+            # ``cache_control`` puts a second, rolling breakpoint on the newest
+            # message so each round re-reads the previous round's prefix from
+            # cache instead of reprocessing it. OpenAI and Gemini cache long
+            # prefixes automatically and need nothing here.
+            system_message = SystemMessage(
+                content=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+            )
+            payload = [system_message, *self._to_langchain(messages)]
+            reply = self._invoke(bound, payload, cache_control={"type": "ephemeral"})
+        else:
+            payload = [SystemMessage(content=system), *self._to_langchain(messages)]
+            reply = self._invoke(bound, payload)
 
         calls = [
             ToolCall(

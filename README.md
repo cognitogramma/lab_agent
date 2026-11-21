@@ -20,6 +20,9 @@ blocks it, contact Tulane IT.
   Choose **Read page** to inspect a result and **Save paper** to keep it.
 - **Ideas.** In **Ideas & notes**, select **New research idea** to jot down a
   hypothesis, link the papers that prompted it, and record what to try next.
+- **Your files.** Drag files from File Explorer onto the window, or use
+  **Session > Attach a file...** (Ctrl+Shift+O). The assistant can read an
+  attached file for the rest of the session.
 - **ARGEN data.** Press **Ctrl+O** to open a raw instrument file. The run guide
   explains what the lab needs to supply before calculating molar mass or the
   second virial coefficient.
@@ -29,8 +32,10 @@ blocks it, contact Tulane IT.
 
 Literature search and notes work without a model key. For the assistant, open
 **Research assistant > Model settings**, choose Gemini, Claude, or OpenAI,
-enter your API key, and select **Use this key**. Your provider may charge for
-usage.
+pick a model from the list (or type any model id), enter your API key, and
+select **Use this model**. Once a key is saved you can switch models without
+re-entering it. Smaller models (for example Claude Haiku) answer fastest.
+Your provider may charge for usage.
 
 Try asking it to compare two papers on light scattering and cite the methods
 sections it used. You can also save a specialist to repeat a task across

@@ -23,3 +23,5 @@ pytest>=8.0
 # General web search; the arXiv paper search also works without this package.
 ddgs>=9.0,<10
 customtkinter>=5.2,<6
+# Dragging files from Explorer onto the window.
+tkinterdnd2>=0.4,<1

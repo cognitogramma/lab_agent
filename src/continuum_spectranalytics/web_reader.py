@@ -409,7 +409,7 @@ def _prose(value: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
-def read_web_page(url: str, max_chars: int = 12000) -> dict[str, Any]:
+def read_web_page(url: str, max_chars: int = 6000) -> dict[str, Any]:
     """Retrieve public prose, with a SHA-256 of the decompressed source bytes.
 
     The 15-second budget covers DNS, redirects, connection and response reads.

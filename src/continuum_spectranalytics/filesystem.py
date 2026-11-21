@@ -13,7 +13,7 @@ import re
 import stat
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from continuum_spectranalytics import paths
@@ -116,10 +116,54 @@ class FilePolicy:
 class FileAccess:
     def __init__(self, policy: FilePolicy | None = None):
         self._policy = policy
+        # Files and folders the researcher handed over this session by dragging
+        # them onto the window or choosing them with "Attach a file". That
+        # gesture is the consent, so they are readable even when the policy
+        # file is disabled or does not list their folder. Read-only, never
+        # saved, and every other check -- protected locations, credential
+        # files, denied paths, links -- still applies.
+        self._granted: list[Path] = []
+
+    @property
+    def granted(self) -> tuple[Path, ...]:
+        return tuple(self._granted)
+
+    def grant(self, raw: str | Path) -> Path:
+        """Allow this session to read one dropped or attached file or folder."""
+        path = Path(str(raw)).expanduser()
+        if not path.is_absolute():
+            raise Rejected("Use an absolute path.")
+        resolved = path.resolve()
+        if not resolved.exists():
+            raise Rejected(f"{resolved} does not exist.")
+        probe = FilePolicy((resolved,), ())
+        # Use the full check: a dropped .env or system file is still refused.
+        probe_denied = self._loaded_policy()
+        if probe_denied is not None:
+            probe = replace(probe, denied_paths=probe_denied.denied_paths)
+        checked = probe.check(resolved)
+        if checked not in self._granted:
+            self._granted.append(checked)
+        return checked
+
+    def _loaded_policy(self) -> FilePolicy | None:
+        if self._policy is not None:
+            return self._policy
+        try:
+            return FilePolicy.load()
+        except Rejected:
+            return None
 
     @property
     def policy(self) -> FilePolicy:
-        return self._policy or FilePolicy.load()
+        base = self._loaded_policy()
+        if base is None:
+            if not self._granted:
+                return FilePolicy.load()  # raises with the explanation
+            base = FilePolicy((), ())
+        if self._granted:
+            base = replace(base, read_roots=base.read_roots + tuple(self._granted))
+        return base
 
     def permissions(self) -> str:
         policy = self.policy

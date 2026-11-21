@@ -996,7 +996,7 @@ _TOOLS: list[Tool] = [
         "This does not execute JavaScript, log in, post data or change an experiment.",
         _object({
             "url": {"type": "string", "description": "Public HTTP or HTTPS source URL."},
-            "max_chars": {"type": "integer", "description": "Maximum extracted characters; default 12000, at most 24000."},
+            "max_chars": {"type": "integer", "description": "Maximum extracted characters; default 6000, at most 24000. Ask for more only when the page is the main source."},
         }, ["url"]),
         _h_read_web_page,
     ),
