@@ -5,7 +5,10 @@
 Drag files onto the window, choose **Session > Attach a file...**
 (Ctrl+Shift+O), or type `/attach <path>`, also at the terminal. Each file is
 recognised straight away, without a model call, and shown as a chip above the
-message box. Click ✕ on a chip to remove it before you send. The files go to the
+message box. Click ✕ on a chip to remove it before you send.
+
+![Attached files shown as chips above the message box](attachments-window.png)
+ The files go to the
 assistant with your next question, together with a short summary of each, so it
 knows what it has without spending a request to find out.
 
