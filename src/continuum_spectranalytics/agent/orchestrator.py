@@ -317,7 +317,10 @@ class Orchestrator:
 
     def _stream(self, user_text: str) -> Iterator[Event]:
         self._turn_start = len(self.messages)
-        self.messages.append(Message(role="user", text=user_text))
+        shelf = getattr(self.context, "attachments", None)
+        block, images = shelf.take_for_message() if shelf is not None else ("", [])
+        text = f"{user_text}\n\n{block}" if block else user_text
+        self.messages.append(Message(role="user", text=text, images=images))
         self._web_calls_used = 0
         self._subagents_run = 0
 
@@ -368,6 +371,16 @@ class Orchestrator:
                 self.trace.append((call, result))
 
             self.messages.append(Message(role="tool", results=results))
+            # Pages and figures read_attachment was asked to show. Not every
+            # provider accepts a picture inside a tool result, so they follow
+            # as a message of their own.
+            shown = shelf.take_pending_images() if shelf is not None else []
+            if shown:
+                self.messages.append(Message(
+                    role="user",
+                    text="Images requested with read_attachment:",
+                    images=shown,
+                ))
 
             if self.should_stop():
                 yield self._stop_event()
@@ -413,6 +426,15 @@ class Orchestrator:
         for index, message in enumerate(self.messages):
             if index < self._turn_start and message.role == "tool":
                 message = replace(message, results=[_compact(r) for r in message.results])
+            elif index < self._turn_start and message.images:
+                # Pictures cost ~1,500 tokens each, every round. After their own
+                # question they are dropped; read_attachment shows one again.
+                count = len(message.images)
+                message = replace(
+                    message, images=[],
+                    text=message.text + f"\n[{count} image(s) from an earlier question not resent; "
+                    "read_attachment shows one again]",
+                )
             outgoing.append(message)
         return outgoing
 

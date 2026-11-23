@@ -59,12 +59,6 @@ UNSUPPORTED = {
     ".QPC (graph), .QPL (layout), .QSC (script), .QST (style) and .QCT (colour "
     "table), and nothing named .QDR. You probably want the .QDA for data or the "
     ".QPC for a graph.",
-    ".xls": "a legacy Excel workbook, which this package cannot read yet. "
-    "Export it to text from the application that wrote it -- a delimited file "
-    "with a header row opens here.",
-    ".xlsx": "an Excel workbook, which this package cannot read yet. Export it "
-    "to text from the application that wrote it -- a delimited file with a "
-    "header row opens here.",
     ".opj": "an Origin project, which this package cannot read yet. Export it "
     "to text from the application that wrote it -- a delimited file with a "
     "header row opens here.",
@@ -180,6 +174,47 @@ def _try_argen(path: Path) -> Table | None:
     )
 
 
+EXCEL_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xls"})
+
+
+def read_excel_sheets(path: Path) -> dict[str, pd.DataFrame]:
+    """Every sheet of a workbook, by name. Needs openpyxl (.xlsx) or xlrd (.xls)."""
+    engine = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
+    try:
+        return pd.read_excel(path, sheet_name=None, engine=engine)
+    except ImportError as error:
+        package = "xlrd" if engine == "xlrd" else "openpyxl"
+        raise UnsupportedFile(
+            f"{path.name} is an Excel workbook and reading it needs {package}: pip install {package}"
+        ) from error
+
+
+def _try_excel(path: Path) -> Table | None:
+    """The first sheet with numbers in it, saying which sheet that was."""
+    if path.suffix.lower() not in EXCEL_SUFFIXES:
+        return None
+    try:
+        sheets = read_excel_sheets(path)
+    except UnsupportedFile:
+        raise
+    except Exception as error:  # noqa: BLE001 - corrupt or password-protected
+        raise ValueError(
+            f"{path.name} could not be opened as an Excel workbook ({type(error).__name__}). "
+            "If it is password-protected, save an unprotected copy and attach that."
+        ) from error
+    for name, frame in sheets.items():
+        frame = frame.dropna(how="all").dropna(axis=1, how="all")
+        if frame.empty:
+            continue
+        if any(pd.api.types.is_numeric_dtype(frame[c]) for c in frame.columns):
+            others = [n for n in sheets if n != name]
+            notes = [f"Excel workbook; read sheet {name!r}"]
+            if others:
+                notes.append("other sheets: " + ", ".join(map(str, others)))
+            return Table(path=path, frame=frame, kind="excel", metadata={"sheet": str(name)}, notes=notes)
+    return None
+
+
 def _try_delimited(path: Path) -> Table | None:
     """Last resort: let pandas sniff it, and say that is what happened."""
     attempts = (
@@ -236,6 +271,12 @@ def open_table(path: str | Path) -> Table:
 
     # KaleidaGraph first: it identifies itself by a signature, so it is the one
     # format here that can be recognised rather than attempted.
+    if suffix in EXCEL_SUFFIXES:
+        table = _try_excel(path)
+        if table is None:
+            raise ValueError(f"{path.name} is an Excel workbook with no sheet holding numbers.")
+        return table
+
     for reader in (_try_kaleidagraph, _try_processed, _try_argen, _try_delimited):
         table = reader(path)
         if table is not None:
@@ -250,7 +291,9 @@ def open_table(path: str | Path) -> Table:
 
 
 __all__ = [
+    "EXCEL_SUFFIXES",
     "PREVIEW_ROWS",
+    "read_excel_sheets",
     "UNSUPPORTED",
     "Table",
     "UnsupportedFile",

@@ -2,7 +2,7 @@ from pathlib import Path
 import sysconfig
 import tomllib
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 from PyInstaller.utils.win32 import versioninfo
 
 
@@ -49,14 +49,21 @@ for distribution in ("langchain-core", "langchain-openai", "langchain-anthropic"
 # tkinterdnd2 loads the native tkdnd extension from its package folder at run time.
 datas += collect_data_files("tkinterdnd2")
 
+# Attachment readers. pdfium is a native library; Word and PowerPoint read their
+# default templates from package data; pypdfium2 reads its version file.
+binaries = collect_dynamic_libs("pypdfium2_raw")
+for package in ("pypdfium2", "pypdfium2_raw", "docx", "pptx"):
+    datas += collect_data_files(package)
+
 # LangChain and Google resolve some public objects on demand. tiktoken discovers plugins.
 hidden_imports = collect_submodules("langchain_core") + collect_submodules("google.genai")
 hidden_imports.append("tiktoken_ext.openai_public")
-hidden_imports.append("tkinterdnd2")
+hidden_imports += ["tkinterdnd2", "pypdfium2", "pypdfium2_raw", "docx", "pptx", "openpyxl", "xlrd", "PIL"]
 
 analysis = Analysis(
     [str(Path(SPECPATH) / "launch.py")],
     pathex=[str(root / "src")],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hidden_imports,
     hooksconfig={"matplotlib": {"backends": ["Agg", "TkAgg"]}},

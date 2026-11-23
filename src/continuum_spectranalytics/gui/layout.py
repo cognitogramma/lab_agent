@@ -133,6 +133,9 @@ def build_layout(app) -> None:
     composer.pack(side="bottom", fill="x", padx=16, pady=16)
     ctk.CTkLabel(composer, text="Your question", text_color=P.quiet, font=small_font,
                  anchor="w").pack(fill="x", pady=(0, 6))
+    # Attached files waiting to go with the next question, one chip each.
+    app.attach_bar = ctk.CTkFrame(composer, fg_color="transparent", corner_radius=0)
+    app.attach_bar.pack(fill="x", pady=(0, 6))
     box = ctk.CTkFrame(composer, fg_color=P.sunken, corner_radius=14)
     box.pack(fill="x")
     app.entry = tk.Text(box, height=3, wrap="word", background=P.sunken, foreground=P.ink,
@@ -147,7 +150,7 @@ def build_layout(app) -> None:
                                    fg_color=P.accent, hover_color=P.accent_hover, text_color=P.accent_ink,
                                    font=(app.fonts.body[0], 14, "bold"), command=app.submit)
     app.ask_button.pack(side="right", pady=(8, 0))
-    ctk.CTkLabel(composer, text="Enter to send", text_color=P.quiet, font=small_font).pack(side="left", pady=(8, 0))
+    ctk.CTkLabel(composer, text="Enter to send  ·  drag files here to attach", text_color=P.quiet, font=small_font).pack(side="left", pady=(8, 0))
     app.transcript = Transcript(app.drawer, app.fonts)
     app.transcript.pack(fill="both", expand=True, padx=2)
     app.drawer.grid_remove()

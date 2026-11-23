@@ -1,5 +1,45 @@
 # Continuum Spectranalytics reference
 
+## Attaching files
+
+Drag files onto the window, choose **Session > Attach a file...**
+(Ctrl+Shift+O), or type `/attach <path>`, also at the terminal. Each file is
+recognised straight away, without a model call, and shown as a chip above the
+message box. Click ✕ on a chip to remove it before you send. The files go to the
+assistant with your next question, together with a short summary of each, so it
+knows what it has without spending a request to find out.
+
+| You attach | The assistant can |
+| --- | --- |
+| ARGEN raw export (.txt/.csv) | summarise it, read the numbers, plot any channel. **Open as run** on the chip processes it as a measurement; the assistant asks before doing that itself. |
+| Processed CSV, delimited table, KaleidaGraph .QDA | read and plot the columns |
+| Excel .xlsx/.xlsm/.xls | read every sheet; plot the first sheet with numbers |
+| KaleidaGraph .QPC plot | read axis titles, series and the curve fit (a .QPC holds no data) |
+| PDF paper | read the text by page, and look at any page as an image for figures, equations or scans |
+| Word .docx | read text and tables in order, and look at embedded pictures |
+| PowerPoint .pptx | read slide text, tables and speaker notes, and look at embedded pictures |
+| Image (.png, .jpg, .tif, .gif, .bmp, .webp) | see the image: plots, notebook photos, screenshots |
+| Text, Markdown, BibTeX, code | read it |
+
+Not readable: old Word `.doc` and PowerPoint `.ppt` files (save them as
+`.docx`/`.pptx`), Origin `.opj` projects (export to text), and
+password-protected files. The window says which, and how to convert it.
+
+Things to know:
+
+- An attached file can be read for the rest of the session, even without a
+  `filesystem-permissions.json`. Attaching never lets the assistant change or
+  delete the file. Credential files such as `.env`, and system folders, cannot
+  be attached.
+- Everything the assistant reads is sent to your model provider and kept in the
+  session log.
+- Long files are read in parts of about 8,000 characters, and only as far as
+  the question needs. Large images are shrunk to 1,568 pixels on the long side.
+  Pictures from earlier questions are not resent with later ones, which keeps
+  requests quick.
+- Values the assistant reads off a picture of a plot are estimates, not
+  measurements.
+
 ## Specialized subagents
 
 With a model connected, ask the **Research assistant** to build a specialist.

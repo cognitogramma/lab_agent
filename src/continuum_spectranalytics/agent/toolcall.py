@@ -204,6 +204,9 @@ class Message:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     results: list[ToolResult] = field(default_factory=list)
+    # Pictures on a user message: attached images, or pages and figures the
+    # assistant asked to see. Anything with ``media_type`` and base64 ``data``.
+    images: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -288,7 +291,20 @@ class LangChainToolProvider:
         converted: list[Any] = []
         for message in messages:
             if message.role == "user":
-                converted.append(HumanMessage(content=message.text))
+                if message.images:
+                    # LangChain's standard image block; each provider package
+                    # translates it to its own wire format.
+                    blocks: list[dict[str, Any]] = [{"type": "text", "text": message.text or "(images)"}]
+                    for image in message.images:
+                        if getattr(image, "label", ""):
+                            blocks.append({"type": "text", "text": f"[image: {image.label}]"})
+                        blocks.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{image.media_type};base64,{image.data}"},
+                        })
+                    converted.append(HumanMessage(content=blocks))
+                else:
+                    converted.append(HumanMessage(content=message.text))
             elif message.role == "assistant":
                 converted.append(
                     AIMessage(

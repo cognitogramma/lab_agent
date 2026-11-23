@@ -440,6 +440,8 @@ REPL_HELP = """\
   /state            where the run stands
   /tools            every tool the agent can call
   /history          what the agent has run this session
+  /attach <path>    attach a file (data, PDF, Word, PowerPoint, Excel, image)
+  /attachments      list the files attached this session
   /runs [query]     search past experiments directly, no model call
   /notes [query]    read notes filed in earlier sessions
   /always <tool>    pre-approve a commit tool for this session
@@ -1134,6 +1136,20 @@ def run_agent(args) -> int:
                 print(describe_registry(registry))
             elif command == "history":
                 print(agent.narrate() if agent else "(no model session)")
+            elif command == "attach":
+                target = rest.strip().strip('"').strip("'")
+                if not target:
+                    print("  usage: /attach <path to a file>")
+                else:
+                    try:
+                        attachment = context.attachments.add(target)
+                    except Exception as error:  # noqa: BLE001 - Rejected or OSError, shown as a reason
+                        print(f"  cannot attach {target}: {error}")
+                    else:
+                        print(attachment.brief())
+                        print("  it goes to the assistant with your next message.")
+            elif command == "attachments":
+                print(context.attachments.listing())
             elif command == "runs":
                 print(registry["search_past_runs"].handler(context, {"query": rest or None}))
             elif command == "notes":

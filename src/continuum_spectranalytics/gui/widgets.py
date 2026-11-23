@@ -1076,7 +1076,7 @@ class OpenRunDialog(tk.Toplevel):
     apply it to, which describes nothing.
     """
 
-    def __init__(self, parent, fonts: Fonts, author: str) -> None:
+    def __init__(self, parent, fonts: Fonts, author: str, raw: str | None = None) -> None:
         super().__init__(parent)
         self.result: dict[str, str] | None = None
         p = PALETTE
@@ -1104,6 +1104,8 @@ class OpenRunDialog(tk.Toplevel):
         ).pack(fill="x", pady=(4, 12))
 
         self.raw = self._picker(wrap, fonts, "raw instrument file", (("data files", "*.*"),))
+        if raw:
+            self.raw.insert(0, raw)
         self.declarations = self._picker(
             wrap, fonts, "declarations (optional)", (("JSON", "*.json"), ("all", "*.*"))
         )
@@ -1175,8 +1177,8 @@ class OpenRunDialog(tk.Toplevel):
         self.destroy()
 
     @classmethod
-    def put(cls, parent, fonts: Fonts, author: str):
-        dialog = cls(parent, fonts, author)
+    def put(cls, parent, fonts: Fonts, author: str, raw: str | None = None):
+        dialog = cls(parent, fonts, author, raw)
         parent.wait_window(dialog)
         return dialog.result
 

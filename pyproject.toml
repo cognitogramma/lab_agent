@@ -46,9 +46,18 @@ test = ["pytest>=8.0"]
 # Internet search is independent of the model providers. arXiv needs only the
 # standard library; general web search uses DDGS and needs no API key.
 search = ["ddgs>=9.0,<10"]
-gui = ["customtkinter>=5.2,<6", "tkinterdnd2>=0.4,<1"]
+# Reading attached files: PDF papers, Word, PowerPoint, Excel, images.
+files = [
+    "pypdfium2>=4.30,<6",
+    "python-docx>=1.1,<2",
+    "python-pptx>=1.0,<2",
+    "openpyxl>=3.1,<4",
+    "xlrd>=2.0,<3",
+    "pillow>=10",
+]
+gui = ["customtkinter>=5.2,<6", "tkinterdnd2>=0.4,<1", "continuum-spectranalytics[files]"]
 
-all = ["continuum-spectranalytics[gemini,claude,openai,test,search,gui]"]
+all = ["continuum-spectranalytics[gemini,claude,openai,test,search,gui,files]"]
 windows-build = ["continuum-spectranalytics[gemini,claude,openai,search,gui]", "pyinstaller>=6.22.3,<7"]
 
 [project.scripts]

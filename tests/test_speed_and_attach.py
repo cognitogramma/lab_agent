@@ -185,9 +185,16 @@ def test_dropping_a_file_on_the_window_attaches_it(app, tmp_path):
     app.tk.eval(str(script).replace("%D", "{{%s}}" % dropped.as_posix()).replace("%A", "copy"))
     _settle(app)
 
-    assert f"Attached file: {dropped}" in app.entry.get("1.0", "end")
+    shelf = app.session.context.attachments
+    assert [a.path for a in shelf.unsent()] == [dropped.resolve()]
+    chips = " ".join(str(w.cget("text")) for chip in app.attach_bar.winfo_children()
+                     for w in chip.winfo_children() if hasattr(w, "cget"))
+    assert "raw trace.csv" in chips
     assert dropped.resolve() in app.session.context.files.granted
     assert json.loads(app.session.context.files.read_file(str(dropped)))["content"] == "t,ls8\n"
+    for attachment in shelf:
+        shelf.remove(attachment.id)
+    app.render_attachments()
 
 
 def test_a_protected_file_is_refused_in_the_transcript(app, tmp_path):
@@ -195,7 +202,7 @@ def test_a_protected_file_is_refused_in_the_transcript(app, tmp_path):
     secret.write_text("KEY=1")
     app.attach_files([str(secret)])
     _settle(app)
-    assert "Attached file" not in app.entry.get("1.0", "end")
+    assert not app.session.context.attachments.unsent()
     assert "cannot attach" in app.transcript.plain().lower()
 
 

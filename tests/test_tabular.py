@@ -65,15 +65,36 @@ def test_an_ordinary_export_is_sniffed_and_says_so(delimited):
 
 def test_unreadable_formats_are_refused_with_what_to_do(tmp_path):
     """A refusal that does not say what to try instead is just a dead end."""
-    path = tmp_path / "old_experiment.xlsx"
+    path = tmp_path / "old_experiment.opj"
     path.write_bytes(b"\x00\x01binary")
 
     with pytest.raises(UnsupportedFile) as error:
         open_table(path)
 
     message = str(error.value)
-    assert "Excel" in message
+    assert "Origin" in message
     assert "Export it to text" in message  # actionable, not just a refusal
+
+
+def test_an_excel_workbook_opens_on_its_first_sheet_with_numbers(tmp_path):
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("openpyxl")
+    path = tmp_path / "old_experiment.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame({"note": ["cover sheet"]}).to_excel(writer, sheet_name="About", index=False)
+        pd.DataFrame({"conc": [0.1, 0.2], "kc_r": [1.5, 1.7]}).to_excel(writer, sheet_name="Data", index=False)
+
+    table = open_table(path)
+    assert table.kind == "excel"
+    assert table.numeric_columns() == ["conc", "kc_r"]
+    assert any("'Data'" in note for note in table.notes)
+
+
+def test_a_corrupt_workbook_says_so(tmp_path):
+    path = tmp_path / "broken.xlsx"
+    path.write_bytes(b"\x00\x01binary")
+    with pytest.raises(ValueError, match="could not be opened as an Excel workbook"):
+        open_table(path)
 
 
 def test_a_missing_file_says_so_plainly(tmp_path):

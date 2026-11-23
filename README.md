@@ -21,8 +21,9 @@ blocks it, contact Tulane IT.
 - **Ideas.** In **Ideas & notes**, select **New research idea** to jot down a
   hypothesis, link the papers that prompted it, and record what to try next.
 - **Your files.** Drag files from File Explorer onto the window, or use
-  **Session > Attach a file...** (Ctrl+Shift+O). The assistant can read an
-  attached file for the rest of the session.
+  **Session > Attach a file...** (Ctrl+Shift+O). Each file shows as a chip
+  above the message box and goes to the assistant with your next question.
+  [What can be attached](docs/reference.md#attaching-files)
 - **ARGEN data.** Press **Ctrl+O** to open a raw instrument file. The run guide
   explains what the lab needs to supply before calculating molar mass or the
   second virial coefficient.

@@ -219,31 +219,65 @@ class Workbench(ctk.CTk):
             self.attach_files(list(chosen))
 
     def attach_files(self, raw_paths) -> None:
-        """Give the assistant read access to these files and mention them in the draft.
+        """Attach files for the assistant: recognise each one and show it as a chip.
 
         Dropping a file is the researcher saying "use this", so it is readable
         for the rest of the session whatever filesystem-permissions.json says.
-        Protected locations and credential files are still refused.
+        Protected locations and credential files are still refused. Nothing is
+        sent to a model here; the files go with the next question.
         """
         from continuum_spectranalytics.tools import Rejected
 
-        attached: list[str] = []
+        shelf = self.session.context.attachments
+        added = []
         for raw in raw_paths:
             try:
-                attached.append(str(self.session.context.files.grant(raw)))
+                added.append(shelf.add(raw))
             except (Rejected, OSError) as error:
+                self.show_assistant()
                 self.transcript.block("cannot attach that file", f"{raw}\n{error}", "declined")
-        if not attached:
+        if not added:
             return
         self.show_assistant()
-        current = self.entry.get("1.0", "end-1c")
-        lines = "\n".join(f"Attached file: {path}" for path in attached)
-        prefix = "" if not current.strip() else ("\n" if not current.endswith("\n") else "")
-        self.entry.insert("end", f"{prefix}{lines}\n")
-        self.entry.see("end")
+        for attachment in added:
+            if attachment.kind == "unsupported":
+                # Said here, with the fix; not sent to the model to repeat back.
+                shelf.remove(attachment.id)
+                self.transcript.block(f"{attachment.name}: cannot be read", attachment.reason, "declined")
+            else:
+                summary = attachment.summary.splitlines()[0] if attachment.summary else ""
+                summary = summary.split(":")[0] if len(summary) > 70 else summary
+                self.transcript.note(f"attached {attachment.name} -- {attachment.label}"
+                                     + (f", {summary}" if summary else ""))
+        self.render_attachments()
         self.entry.focus_set()
-        names = ", ".join(Path(path).name for path in attached)
-        self.transcript.note(f"attached {names} -- the assistant can read it this session.")
+
+    def render_attachments(self) -> None:
+        """Chips for the files that will go with the next question."""
+        bar = getattr(self, "attach_bar", None)
+        if bar is None:
+            return
+        for child in bar.winfo_children():
+            child.destroy()
+        P = theme.PALETTE
+        small = (self.fonts.body[0], 12)
+        for attachment in self.session.context.attachments.unsent():
+            chip = ctk.CTkFrame(bar, fg_color=P.sunken, corner_radius=10)
+            chip.pack(side="top", anchor="w", pady=2)
+            ctk.CTkLabel(chip, text=f"📎 {attachment.name}  ·  {attachment.label.split(' (')[0]}",
+                         text_color=P.ink, font=small).pack(side="left", padx=(10, 4))
+            if attachment.kind == "argen":
+                ctk.CTkButton(chip, text="Open as run", width=90, height=22, corner_radius=6,
+                              fg_color=P.accent, hover_color=P.accent_hover, text_color=P.accent_ink,
+                              font=small, command=lambda a=attachment: self.open_run(raw=str(a.path))
+                              ).pack(side="left", padx=2)
+            ctk.CTkButton(chip, text="✕", width=22, height=22, corner_radius=6, fg_color="transparent",
+                          hover_color=P.rule, text_color=P.quiet, font=small,
+                          command=lambda a=attachment: self._unattach(a.id)).pack(side="left", padx=(0, 4))
+
+    def _unattach(self, attachment_id: str) -> None:
+        self.session.context.attachments.remove(attachment_id)
+        self.render_attachments()
 
     def reset_layout(self) -> None:
         self.hide_assistant()
@@ -475,6 +509,7 @@ class Workbench(ctk.CTk):
             self.log.write("session error", signal.payload)
         elif kind == "done":
             self._finish(signal.payload)
+            self.render_attachments()
 
     def _show_event(self, event) -> None:
         from continuum_spectranalytics.agent.transcript import activity, first_sentence, hint
@@ -576,6 +611,9 @@ class Workbench(ctk.CTk):
 
     def submit(self) -> None:
         line = self.entry.get("1.0", "end-1c").strip()
+        waiting = self.session.context.attachments.unsent()
+        if not line and waiting:
+            line = "Please look at the attached file(s)."
         if not line:
             return
         if line.startswith("/"):
@@ -604,11 +642,16 @@ class Workbench(ctk.CTk):
             return
         self.entry.delete("1.0", "end")
         self.welcome.pack_forget()
-        self.transcript.you(line)
+        shown = line
+        if waiting:
+            shown += "\n" + "  ".join(f"📎 {a.name}" for a in waiting)
+        self.transcript.you(shown)
         self.narrator.user(line)
         self._busy(True)
         if not self.bridge.submit(line):
             self._busy(False)
+        # The orchestrator takes them when the turn starts, on the worker.
+        self.after(250, self.render_attachments)
 
     def _busy(self, working: bool) -> None:
         """One button, two jobs.
@@ -668,6 +711,7 @@ class Workbench(ctk.CTk):
 /state             show where the run stands
 /tools             every tool the agent can call
 /history           what the agent has run this session
+/attach [path]     attach a file for the assistant (or drag it onto the window)
 /runs [query]      search past experiments, no model call
 /notes [query]     read notes filed in earlier sessions
 /search [query]    find sources and lab memory in Literature
@@ -691,6 +735,12 @@ class Workbench(ctk.CTk):
             self.tabs.select(self.tools_panel)
         elif command == "history":
             self.show_history()
+        elif command == "attach":
+            target = rest.strip().strip('"').strip("'")
+            if target:
+                self.attach_files([target])
+            else:
+                self.choose_attachments()
         elif command == "runs":
             self.tabs.select(self.runs_panel)
             self.runs_panel.query.delete(0, "end")
@@ -812,7 +862,7 @@ class Workbench(ctk.CTk):
             self.transcript.note(f"signed in: {self.provider.name} / {self.provider.model}")
         self._refresh_status()
 
-    def open_run(self) -> None:
+    def open_run(self, raw: str | None = None) -> None:
         from continuum_spectranalytics.agent.orchestrator import ApprovalPolicy, allow_all, deny_all
         from continuum_spectranalytics.cli import open_session
         from continuum_spectranalytics.intake import MissingDeclarations
@@ -821,7 +871,7 @@ class Workbench(ctk.CTk):
             self.show_assistant()
             self.transcript.note("a question is still running; wait for it to finish.")
             return
-        chosen = OpenRunDialog.put(self, self.fonts, str(self.args.author or "researcher"))
+        chosen = OpenRunDialog.put(self, self.fonts, str(self.args.author or "researcher"), raw)
         if not chosen:
             return
 
@@ -838,11 +888,8 @@ class Workbench(ctk.CTk):
 
         self.research_panel.context_changed()
         # Files attached earlier stay attached when a run is opened.
-        for granted in self.session.context.files.granted:
-            try:
-                opened.context.files.grant(granted)
-            except Exception:  # noqa: BLE001 - a moved file is simply dropped
-                pass
+        opened.context.files = self.session.context.files
+        opened.context.attachments = self.session.context.attachments
         self.session = opened
         self.research_panel.refresh_context()
         self.args = nominated

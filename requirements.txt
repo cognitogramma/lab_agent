@@ -25,3 +25,11 @@ ddgs>=9.0,<10
 customtkinter>=5.2,<6
 # Dragging files from Explorer onto the window.
 tkinterdnd2>=0.4,<1
+
+# Reading attached files: PDF papers, Word, PowerPoint, Excel, images.
+pypdfium2>=4.30,<6
+python-docx>=1.1,<2
+python-pptx>=1.0,<2
+openpyxl>=3.1,<4
+xlrd>=2.0,<3
+pillow>=10
