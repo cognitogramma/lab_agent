@@ -753,6 +753,10 @@ def _h_open_data_file(ctx: ToolContext, args: dict[str, Any]) -> str:
     if other:
         lines.append("not plottable: " + ", ".join(other))
     lines.extend(f"note: {n}" for n in table.notes)
+    if table.kind != "argen":
+        from continuum_spectranalytics.tabular import column_summary
+
+        lines.extend(column_summary(table.frame))
     lines.append(table.preview())
     return "\n".join(lines)
 

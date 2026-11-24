@@ -60,6 +60,7 @@ KIND_LABELS = {
     "processed": "processed Continuum CSV",
     "kaleidagraph": "KaleidaGraph data (.QDA)",
     "delimited": "data table",
+    "sls_logger": "SLS logger export (polarized/depolarized camera intensities)",
     "excel": "Excel workbook",
     "kaleidagraph_plot": "KaleidaGraph plot (.QPC)",
     "pdf": "PDF document",
@@ -103,7 +104,7 @@ class Attachment:
 
     @property
     def is_table(self) -> bool:
-        return self.kind in {"argen", "processed", "kaleidagraph", "delimited", "excel"}
+        return self.kind in {"argen", "processed", "kaleidagraph", "delimited", "excel", "sls_logger"}
 
     def text(self) -> str:
         if self._text is None:
@@ -323,13 +324,27 @@ def inspect(path: Path, attachment_id: str = "a1", size: int | None = None) -> A
 
 
 def _table_summary(table: Any) -> str:
+    from continuum_spectranalytics.tabular import column_summary
+
     columns = table.columns
     shown = ", ".join(columns[:20]) + (f", ... ({len(columns)} in all)" if len(columns) > 20 else "")
     numeric = table.numeric_columns()
-    lines = [f"{len(table.frame):,} rows x {len(columns)} columns: {shown}"]
+    frame = table.frame
+    lines = [f"{len(frame):,} rows x {len(columns)} columns: {shown}"]
+    if "time_s" in frame and len(frame) > 1:
+        span = float(frame["time_s"].iloc[-1] - frame["time_s"].iloc[0])
+        lines.append(f"covers {span:,.0f} s ({span / 60:.1f} min)")
+        planned = table.metadata.get("record_duration_s")
+        try:
+            if planned and float(planned) > 1.5 * span:
+                lines.append(f"WARNING: recording stopped early: {span:,.0f} s of a planned {float(planned):,.0f} s")
+        except ValueError:
+            pass
     if numeric and numeric != columns:
         lines.append("plottable: " + ", ".join(numeric[:20]) + (" ..." if len(numeric) > 20 else ""))
-    lines.extend(f"note: {note}" for note in table.notes[:4])
+    lines.extend(f"note: {note}" for note in table.notes[:10])
+    if table.kind != "argen":  # ARGEN already gets a dedicated pipeline and per-channel checks
+        lines.extend(column_summary(frame))
     return "\n".join(lines)
 
 

@@ -215,6 +215,158 @@ def _try_excel(path: Path) -> Table | None:
     return None
 
 
+def _try_commented_header(path: Path) -> Table | None:
+    """A CSV whose first lines are ``#,key,value`` -- how the file was made.
+
+    The lab's Basler Dual-Channel SLS Logger writes the camera, laser, regions
+    of interest and notes this way, above an ordinary header row. Read as a
+    plain CSV those lines are comments and are thrown away, and with them the
+    only record of how the measurement was taken.
+    """
+    import csv
+    import io
+
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as stream:
+            head = []
+            for line in stream:
+                if not line.startswith("#,"):
+                    break
+                head.append(line)
+                if len(head) > 200:
+                    return None
+    except OSError:
+        return None
+    if not head:
+        return None
+    metadata: dict[str, str] = {}
+    for row in csv.reader(io.StringIO("".join(head))):
+        if len(row) >= 3 and row[1].strip():
+            metadata[row[1].strip()] = ",".join(row[2:]).strip().strip('"')
+    try:
+        frame = pd.read_csv(path, comment=None, skiprows=len(head))
+    except Exception:  # noqa: BLE001
+        return None
+    if frame.shape[1] < 2 or not len(frame):
+        return None
+    kind = "sls_logger" if "SLS Logger" in metadata.get("app", "") else "delimited"
+    notes = [f"recorded by {metadata['app']}"] if "app" in metadata else []
+    notes += [f"header: {line}" for line in describe_header(metadata)]
+    return Table(path=path, frame=frame, kind=kind, metadata=metadata, notes=notes)
+
+
+def describe_header(metadata: dict[str, str]) -> list[str]:
+    """The header in plain words: instrument settings, regions, notes, length."""
+    import json
+
+    def parsed(key):
+        try:
+            value = json.loads(metadata.get(key, ""))
+            return value if isinstance(value, dict) else None
+        except ValueError:
+            return None
+
+    lines = []
+    camera = parsed("camera")
+    if camera:
+        lines.append(f"camera {camera.get('camera', '?')}, exposure {camera.get('actual_exposure_us', camera.get('exposure_us', '?'))} us, "
+                     f"one frame every {camera.get('sample_interval_s', '?')} s, {camera.get('pixel_format', '?')}")
+    laser = parsed("laser")
+    if laser:
+        lines.append(f"laser {laser.get('controller_model', '?')} at {laser.get('wavelength_nm', '?')} nm, set "
+                     f"{laser.get('setpoint_mw', '?')} mW (measured {laser.get('measured_power_mw', '?')} mW), "
+                     f"emission {laser.get('emission', '?')}")
+    rois = parsed("rois")
+    if rois:
+        lines.append("regions of interest: " + "; ".join(
+            f"{name} centre ({r.get('x')}, {r.get('y')}) radius {r.get('radius')} px" for name, r in rois.items()
+            if isinstance(r, dict)))
+    attenuation = parsed("automatic_laser_attenuation")
+    if attenuation is not None:
+        lines.append("automatic laser attenuation " + ("ON" if attenuation.get("enabled_at_recording_start") else
+                     "OFF at the start (saturated readings are not corrected)"))
+    if metadata.get("notes"):
+        lines.append("notes: " + metadata["notes"].replace('""', '"'))
+    if metadata.get("record_duration_s"):
+        lines.append(f"planned recording length {float(metadata['record_duration_s']):,.0f} s")
+    if metadata.get("output_path"):
+        lines.append("saved as " + metadata["output_path"].replace("\\\\", "\\"))
+    return lines
+
+
+def column_summary(frame: pd.DataFrame, max_columns: int = 12) -> list[str]:
+    """Start, end and range of each numeric column, and what looks wrong.
+
+    Enough for a reader -- or the assistant -- to describe a whole run without
+    paging through thousands of rows, which is slow and is how a saturated
+    detector at the end of a run gets missed.
+    """
+    lines, warnings = [], []
+    numeric = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
+    edge = max(1, min(60, len(frame) // 20))
+    for column in numeric[:max_columns]:
+        values = frame[column]
+        present = values.dropna()
+        if present.empty:
+            continue
+        top = present.max()
+        lines.append(f"{column}: start {present.iloc[:edge].mean():.4g}, end {present.iloc[-edge:].mean():.4g}, "
+                     f"min {present.min():.4g}, max {top:.4g}"
+                     + (f", {values.isna().sum():,} blank" if values.isna().any() else ""))
+        if column in {"time_s", "timestamp_unix_s"} or present.nunique() <= 10:
+            continue
+        at_top_mask = (values >= top - 1e-9).to_numpy()
+        at_top = int(at_top_mask.sum())
+        if at_top >= max(5, 0.01 * len(present)):
+            warnings.append(_ceiling_warning(frame, column, top, at_top_mask, len(present)))
+        spikes = _spike_count(present)
+        if spikes:
+            warnings.append(f"{column} has {spikes:,} brief spikes well above its neighbours "
+                            "(often dust or large particles crossing the beam)")
+    return lines + [f"WARNING: {w}" for w in warnings]
+
+
+def _when(frame: pd.DataFrame, row: int) -> str:
+    if "time_s" in frame:
+        return f"{float(frame['time_s'].iloc[row]):,.0f} s"
+    return f"row {row:,}"
+
+
+def _ceiling_warning(frame: pd.DataFrame, column: str, top: float, mask, present: int) -> str:
+    """Where a signal sits at its maximum: a sustained plateau, isolated hits, or both."""
+    import numpy as np
+
+    # The longest unbroken stretch at the maximum is the plateau; the rest are spikes.
+    padded = np.concatenate(([False], mask, [False]))
+    edges = np.flatnonzero(np.diff(padded.astype(int)))
+    runs = list(zip(edges[::2], edges[1::2]))
+    start, stop = max(runs, key=lambda r: r[1] - r[0])
+    length = stop - start
+    isolated = int(mask.sum()) - length
+    if length >= 5:
+        until = "the end" if stop >= len(mask) else _when(frame, stop - 1)
+        text = (f"{column} is pinned at its maximum ({top:g}) from {_when(frame, start)} to {until} "
+                f"({length:,} readings, {100 * length / present:.0f}%): likely detector saturation, "
+                "so those values are a ceiling, not a measurement")
+        if isolated:
+            text += f"; it also touches the maximum {isolated:,} other time(s) in single spikes"
+        return text
+    return (f"{column} touches its maximum ({top:g}) {int(mask.sum()):,} times in brief spikes, first at "
+            f"{_when(frame, int(np.flatnonzero(mask)[0]))}: check for detector saturation")
+
+
+def _spike_count(values: pd.Series) -> int:
+    """Readings far above a running median: transient spikes rather than the trend."""
+    if len(values) < 50:
+        return 0
+    baseline = values.rolling(31, center=True, min_periods=5).median()
+    residual = values - baseline
+    spread = (residual - residual.median()).abs().median()
+    if not spread or pd.isna(spread):
+        return 0
+    return int((residual > 8 * 1.4826 * spread).sum())
+
+
 def _try_delimited(path: Path) -> Table | None:
     """Last resort: let pandas sniff it, and say that is what happened."""
     attempts = (
@@ -277,7 +429,7 @@ def open_table(path: str | Path) -> Table:
             raise ValueError(f"{path.name} is an Excel workbook with no sheet holding numbers.")
         return table
 
-    for reader in (_try_kaleidagraph, _try_processed, _try_argen, _try_delimited):
+    for reader in (_try_kaleidagraph, _try_processed, _try_argen, _try_commented_header, _try_delimited):
         table = reader(path)
         if table is not None:
             return table
@@ -292,6 +444,8 @@ def open_table(path: str | Path) -> Table:
 
 __all__ = [
     "EXCEL_SUFFIXES",
+    "column_summary",
+    "describe_header",
     "PREVIEW_ROWS",
     "read_excel_sheets",
     "UNSUPPORTED",
