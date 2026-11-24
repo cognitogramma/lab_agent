@@ -88,6 +88,16 @@ ACTIVITY: dict[str, str] = {
     "sweep_windows": "sweeping the smoothing windows",
     "verify_output": "verifying the emitted CSV",
     "write_note": "filing a note for later sessions",
+    "list_attachments": "listing the attached files",
+    "read_attachment": "reading an attached file",
+    "copy_file": "copying a file",
+    "open_file": "opening a file",
+    "get_file_permissions": "checking which folders it may use",
+    "list_directory": "looking in a folder",
+    "read_file": "reading a file",
+    "write_file": "saving a file",
+    "create_directory": "creating a folder",
+    "describe_plot_file": "reading a KaleidaGraph plot",
 }
 
 # Argument hint length. Long enough for a window length, a column name or a
@@ -123,6 +133,12 @@ def hint(arguments: dict[str, Any]) -> str:
         text = str(value).strip()
         if not text or text.lower() in {"none", "null"}:
             continue
+        if key in {"path", "source", "destination"} and ("/" in text or "\\" in text):
+            # The file name says what a reader needs; the folders are in the log.
+            text = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or text
+            if key == "path":
+                parts.append(text)
+                continue
         if len(text) > HINT_LIMIT:
             text = text[: HINT_LIMIT - 3] + "..."
         parts.append(f"{key.replace('_', ' ')} {text}")

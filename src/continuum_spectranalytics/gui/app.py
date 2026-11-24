@@ -570,7 +570,17 @@ class Workbench(ctk.CTk):
         elif kind == "call":
             arguments = dict(event.call.arguments) if event.call else {}
             self.transcript.end_stream()
-            self.transcript.action(activity(event.tool), hint(arguments))
+            if event.tool == "read_attachment":
+                # "reading paper.pdf, page 2" rather than "id a2, view 2".
+                try:
+                    named = self.session.context.attachments.get(arguments.get("id", "")).name
+                except Exception:  # noqa: BLE001 - an unknown id is refused by the tool itself
+                    named = str(arguments.get("id", ""))
+                detail = f"page or picture {arguments['view']}" if arguments.get("view") else (
+                    f"part {arguments['part']}" if arguments.get("part", 1) not in (1, "1", None) else "")
+                self.transcript.action(f"reading {named}", detail)
+            else:
+                self.transcript.action(activity(event.tool), hint(arguments))
             self._phase = activity(event.tool)
         elif kind == "result":
             self._phase = "thinking"

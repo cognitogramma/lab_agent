@@ -49,6 +49,7 @@ sessions. [Creating a specialist](docs/reference.md#specialized-subagents)
 
 ### Lab and source documentation
 
+- [Demo guide](docs/DEMO.md)
 - [Working from a source checkout](docs/LAB-SETUP.md)
 - [Building the Windows executable](docs/reference.md#build-the-windows-app)
 - [Technical reference and known limitations](docs/reference.md)
