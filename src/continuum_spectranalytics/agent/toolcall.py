@@ -105,11 +105,13 @@ SPECS: dict[str, ProviderSpec] = {
     "openai": ProviderSpec(
         name="openai",
         env_keys=("OPENAI_API_KEY",),
-        default_model="gpt-5",
+        default_model="gpt-5.5",
         model_env="OPENAI_MODEL",
         pip_name="langchain-openai",
         key_url="https://platform.openai.com/api-keys",
-        suggested_models=("gpt-5", "gpt-5-mini"),
+        # Measured on the same question (attach a run and a paper, plot, summarise),
+        # Speed: Fast: gpt-5.5 4.9 s, gpt-4.1 4.4 s, gpt-5 6.8 s, gpt-5-mini 10-13 s.
+        suggested_models=("gpt-5.5", "gpt-4.1", "gpt-5", "gpt-5-mini"),
     ),
 }
 
@@ -750,8 +752,10 @@ def _client_for(spec: ProviderSpec, model: str, api_key: str, temperature: float
         from langchain_openai import ChatOpenAI
 
         extra = {"reasoning_effort": effort} if effort else {}
+        # The Responses API: newer models (gpt-5.5 and later) refuse tools
+        # combined with a reasoning setting on the older chat-completions API.
         return ChatOpenAI(model=model, temperature=temperature, api_key=api_key,
-                          stream_usage=True, **extra)
+                          stream_usage=True, use_responses_api=True, **extra)
     raise ProviderUnavailable(f"no client constructor for {spec.name!r}")
 
 

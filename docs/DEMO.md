@@ -16,9 +16,20 @@ cited answer out, with the timing shown under every answer.
    page shows the measured startup time of both.
 2. **Connect a model.** Research assistant > **Model settings**: pick the
    provider, a model and **Speed: Fast**, paste the key, tick *save*, and
-   select **Use this model**. For the quickest replies use a small model
-   (for example Claude Haiku); switch to Sonnet or Balanced for harder
-   questions.
+   select **Use this model**. With OpenAI, use **gpt-5.5** on **Fast**.
+
+   Measured with a real key on the same question (attach a run and a paper,
+   plot ls8, summarise the paper):
+
+   | Model | Speed | Answer time |
+   | --- | --- | --- |
+   | gpt-5.5 | Fast | 4.9 s |
+   | gpt-4.1 | (no setting) | 4.4 s |
+   | gpt-5 | Fast | 6.0-7.1 s |
+   | gpt-5 | default thinking | 14.7 s (the old behaviour) |
+   | gpt-5-mini | Fast | 10-13 s (takes more steps) |
+
+   A picture question (describe an attached plot) took 2.7 s on gpt-5.5 Fast.
 3. **Allow your Desktop.** Session > **File access...**: tick Desktop for
    *read files* and *save copies here*.
 4. **Put the demo files on the Desktop:** one ARGEN export, one PDF paper, one

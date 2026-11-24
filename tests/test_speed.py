@@ -200,3 +200,25 @@ def test_the_bridge_forwards_text_as_it_is_written(context):
             break
         time.sleep(0.01)
     assert "".join(deltas) == "two words"
+
+
+def test_openai_uses_the_responses_api():
+    """gpt-5.5 refuses tools plus a reasoning setting on chat completions."""
+    from continuum_spectranalytics.agent.toolcall import _client_for
+
+    client = _client_for(SPECS["openai"], "gpt-5.5", "not-a-key", 0.2, effort="low")
+    assert client.use_responses_api is True
+
+
+def test_view_zero_means_read_the_text(tmp_path, monkeypatch):
+    from continuum_spectranalytics import filesystem
+
+    monkeypatch.setattr(filesystem, "policy_path", lambda: tmp_path / "absent.json")
+    notes = tmp_path / "notes.md"
+    notes.write_text("# Notes")
+    context = ToolContext(surface=None, notes=NoteBook(tmp_path / "m"), runs_dir=tmp_path / "r")
+    context.attachments.add(notes)
+    read = build_registry()["read_attachment"].handler
+    for view in (0, None, "", "0"):
+        assert "# Notes" in read(context, {"id": "a1", "view": view})
+    assert "# Notes" in read(context, {"id": "a1", "part": 0})

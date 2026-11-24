@@ -1510,11 +1510,12 @@ def _filesystem_tools() -> list[Tool]:
              _object({
                  "id": {"type": "string", "description": "The attachment id, e.g. a1."},
                  "part": {"type": "integer", "description": "Which text part to read, from 1; default 1."},
-                 "view": {"type": "integer", "description": "PDF page or embedded picture number to see as an image."},
+                 "view": {"type": "integer", "description": "Only to see a picture: PDF page or embedded picture number, from 1. Leave out to read text."},
              }, ["id"]),
              lambda ctx, args: ctx.attachments.read(
-                 str(args.get("id", "")), int(args.get("part") or 1),
-                 int(args["view"]) if args.get("view") not in (None, "") else None)),
+                 str(args.get("id", "")), max(1, int(args.get("part") or 1)),
+                 # Models send view 0 or null to mean "no picture": read the text.
+                 int(args["view"]) if str(args.get("view") or "0").strip() not in ("0", "", "None") else None)),
         Tool("get_file_permissions", "read",
              "Show the researcher's configured filesystem roots, exclusions and limits. Check before browsing files.",
              NO_ARGS, lambda ctx, args: ctx.files.permissions()),
