@@ -12,6 +12,11 @@ Save the file on a 64-bit Windows PC and double-click it in File Explorer.
 Python is bundled. The executable is unsigned. If a Tulane-managed computer
 blocks it, contact Tulane IT.
 
+From v0.3.0 there is also a **fast-start** zip: unzip it and run the `.exe`
+inside the folder. It opens in under 2 seconds, where the single `.exe` can take
+from 7 to over 30 seconds because it unpacks itself on every launch.
+[Startup measurements](docs/DEMO.md#before-the-demo-do-this-the-day-before)
+
 [Release notes and checksum](https://github.com/cognitogramma/lab_agent/releases/tag/v0.2.0)
 
 ### Using the app

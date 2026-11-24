@@ -76,7 +76,12 @@ def build_layout(app) -> None:
     def arrange_search(event) -> None:
         if event.widget is not header:
             return
-        wide = event.width / ctk.ScalingTracker.get_window_scaling(app) >= 650
+        # Side by side only when both really fit, measured rather than guessed:
+        # fonts differ between machines, and a fixed threshold let the button
+        # hang past the panel on Windows at the minimum window size.
+        app.global_query.configure(width=240)
+        needed = app.page_title.winfo_reqwidth() + search.winfo_reqwidth() + 18
+        wide = event.width >= needed and event.width / ctk.ScalingTracker.get_window_scaling(app) >= 650
         app.page_title.grid_configure(columnspan=1 if wide else 2)
         # On its own row the box stretches to fit, so it may ask for less:
         # at the minimum window size 240 px pushed the button past the panel.

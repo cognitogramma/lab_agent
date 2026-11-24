@@ -11,9 +11,17 @@ cited answer out, with the timing shown under every answer.
    [Windows build](https://github.com/cognitogramma/lab_agent/actions/workflows/windows-build.yml)
    run, download **Continuum-Spectranalytics-windows-fast-start**, unzip it
    somewhere permanent (for example Documents), and start
-   `Continuum Spectranalytics.exe` inside the folder. It opens much sooner than
-   the single `.exe`, which unpacks itself on every launch. The run's summary
-   page shows the measured startup time of both.
+   `Continuum Spectranalytics.exe` inside the folder. Measured on a Windows
+   build machine, three launches each:
+
+   | Version | Launch 1 | Launch 2 | Launch 3 |
+   | --- | --- | --- | --- |
+   | single `.exe` (120 MB) | 6.7 s | 16.3 s | 33.1 s |
+   | fast-start folder | 1.6 s | 1.6 s | 1.6 s |
+
+   The single `.exe` unpacks itself into Temp on every launch, and antivirus
+   scans what it unpacks, so it gets slower, not faster. Keep the folder
+   together: the `.exe` needs the `_internal` folder beside it.
 2. **Connect a model.** Research assistant > **Model settings**: pick the
    provider, a model and **Speed: Fast**, paste the key, tick *save*, and
    select **Use this model**. With OpenAI, use **gpt-5.5** on **Fast**.
