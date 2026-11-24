@@ -1061,6 +1061,94 @@ class SignInDialog(tk.Toplevel):
         return dialog.result
 
 
+class FileAccessDialog(tk.Toplevel):
+    """Choose which of your folders the assistant may read and save into.
+
+    Writes ``filesystem-permissions.json`` so nobody has to edit JSON by hand.
+    Saving still asks every time: the checkbox allows the assistant to *ask*.
+    Folders already listed in the file by hand are kept and shown.
+    """
+
+    def __init__(self, parent, fonts: Fonts, folders: dict, read: Sequence, write: Sequence) -> None:
+        super().__init__(parent)
+        self.result: tuple[list[str], list[str]] | None = None
+        p = PALETTE
+        self.title("File access")
+        self.configure(background=p.panel)
+        self.resizable(False, False)
+        self.transient(parent)
+        read_set = {str(Path(x)) for x in read}
+        write_set = {str(Path(x)) for x in write}
+        self.folders = {name: str(path) for name, path in folders.items()}
+        known = set(self.folders.values())
+        self.extra_read = sorted(read_set - known)
+        self.extra_write = sorted(write_set - known)
+
+        wrap = tk.Frame(self, background=p.panel, padx=22, pady=18)
+        wrap.pack(fill="both", expand=True)
+        tk.Label(wrap, text="What may the assistant use?", font=fonts.heading,
+                 background=p.panel, foreground=p.ink, anchor="w").pack(fill="x")
+        tk.Label(
+            wrap,
+            text="Files you drag in or attach are always readable. These boxes let the\n"
+                 "assistant find files in your folders by itself, and save copies there.\n"
+                 "It asks you before every save, copy, or open.",
+            font=fonts.small, background=p.panel, foreground=p.quiet, anchor="w", justify="left",
+        ).pack(fill="x", pady=(4, 12))
+
+        grid = tk.Frame(wrap, background=p.panel)
+        grid.pack(fill="x")
+        for column, heading in enumerate(("", "read files", "save copies here")):
+            tk.Label(grid, text=heading, font=fonts.small, background=p.panel,
+                     foreground=p.faint).grid(row=0, column=column, sticky="w", padx=(0, 14))
+        self.read_vars: dict[str, tk.BooleanVar] = {}
+        self.write_vars: dict[str, tk.BooleanVar] = {}
+        for row, (name, path) in enumerate(self.folders.items(), start=1):
+            reading = tk.BooleanVar(value=path in read_set)
+            writing = tk.BooleanVar(value=path in write_set)
+            self.read_vars[name], self.write_vars[name] = reading, writing
+            tk.Label(grid, text=name, font=fonts.body, background=p.panel, foreground=p.ink,
+                     anchor="w").grid(row=row, column=0, sticky="w", padx=(0, 14), pady=2)
+            ttk.Checkbutton(grid, variable=reading,
+                            command=lambda n=name: self._read_changed(n)).grid(row=row, column=1, sticky="w")
+            ttk.Checkbutton(grid, variable=writing,
+                            command=lambda n=name: self._write_changed(n)).grid(row=row, column=2, sticky="w")
+            tk.Label(grid, text=path, font=fonts.mono_small, background=p.panel, foreground=p.faint,
+                     anchor="w").grid(row=row, column=3, sticky="w")
+        if self.extra_read or self.extra_write:
+            tk.Label(wrap, text="Also kept from the settings file: " + ", ".join(
+                sorted(set(self.extra_read) | set(self.extra_write))),
+                font=fonts.small, background=p.panel, foreground=p.quiet, anchor="w",
+                wraplength=520, justify="left").pack(fill="x", pady=(10, 0))
+
+        buttons = tk.Frame(wrap, background=p.panel)
+        buttons.pack(fill="x", pady=(16, 0))
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="Save", style="Accent.TButton", command=self._accept).pack(side="right", padx=6)
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+
+    def _read_changed(self, name: str) -> None:
+        if not self.read_vars[name].get():
+            self.write_vars[name].set(False)  # saving needs reading, for backups
+
+    def _write_changed(self, name: str) -> None:
+        if self.write_vars[name].get():
+            self.read_vars[name].set(True)
+
+    def _accept(self) -> None:
+        read = [self.folders[n] for n, v in self.read_vars.items() if v.get()] + self.extra_read
+        write = [self.folders[n] for n, v in self.write_vars.items() if v.get()] + self.extra_write
+        self.result = (read, write)
+        self.destroy()
+
+    @classmethod
+    def put(cls, parent, fonts: Fonts, folders: dict, read: Sequence, write: Sequence):
+        dialog = cls(parent, fonts, folders, read, write)
+        parent.wait_window(dialog)
+        return dialog.result
+
+
 class OpenRunDialog(tk.Toplevel):
     """Point the session at a run.
 

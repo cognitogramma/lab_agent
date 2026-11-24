@@ -142,6 +142,7 @@ def build_layout(app) -> None:
                         font=app.fonts.body, borderwidth=0, highlightthickness=0,
                         padx=2, pady=4, insertbackground=P.accent, selectbackground=P.selection)
     app.entry.pack(fill="both", expand=True, padx=12, pady=8)
+    app.entry.bind("<<Paste>>", app.paste_files)
     app.entry.bind("<Return>", app._on_return)
     app.entry.bind("<Shift-Return>", lambda _e: None)
     app.entry.bind("<Control-k>", lambda _e: app.show_research())

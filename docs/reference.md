@@ -86,7 +86,7 @@ Legacy `POLYRMC_*` settings still load.
 
 Agent access to local files can be configured in `filesystem-permissions.json`.
 See [filesystem access](filesystem-access.md) for setup, exclusions, backups,
-and the GUI's **Menu > Session > File permissions...** command.
+and the GUI's **Menu > Session > File access...** command.
 
 An auditable analysis pipeline for automatic continuous dilution (ACD)
 light-scattering data, with subjective analysis decisions encoded as explicit,

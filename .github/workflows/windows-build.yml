@@ -1,0 +1,72 @@
+name: Windows build
+
+# Builds "Continuum Spectranalytics.exe" on a real Windows machine, runs the
+# executable's own self-test (every file reader, drag-and-drop, each model
+# provider), and uploads it. Download it from the run's "Artifacts" section.
+on:
+  push:
+    branches: ["main", "claude/**"]
+    paths:
+      - "src/**"
+      - "packaging/**"
+      - "tests/**"
+      - "LAB.md"
+      - "pyproject.toml"
+      - ".github/workflows/windows-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[windows-build]"
+      - name: Build the executable
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build\windows packaging\windows\Continuum-Spectranalytics.spec
+      - name: Self-test the executable
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'dist\Continuum Spectranalytics.exe'
+          $report = Join-Path $PWD 'selftest.json'
+          $run = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$report`"" -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report } else { Write-Host 'no report written' }
+          if ($run.ExitCode -ne 0) { throw "The executable's self-test failed (exit $($run.ExitCode))." }
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash 'dist\Continuum Spectranalytics.exe' -Algorithm SHA256).Hash
+          "$hash  Continuum Spectranalytics.exe" | Out-File -Encoding ascii dist\SHA256.txt
+          Copy-Item selftest.json dist\selftest.json
+          Get-Content dist\SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Continuum-Spectranalytics-windows
+          path: dist/*
+          retention-days: 30
+
+  tests:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all]"
+      - name: Test suite on Windows
+        run: python -m pytest -o addopts="" -q -rfE

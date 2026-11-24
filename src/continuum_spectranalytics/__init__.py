@@ -15,7 +15,7 @@ checked by ``tests/test_tier0_purity.py``.
 
 import os
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 APP_NAME = "Continuum Spectranalytics"
 
 

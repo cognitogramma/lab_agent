@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuum-spectranalytics"
-version = "0.2.0"
+version = "0.3.0"
 description = "Literature review, durable research ideas, and auditable light-scattering analysis"
 requires-python = ">=3.11"
 dependencies = [

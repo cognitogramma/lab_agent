@@ -122,6 +122,7 @@ class Workbench(ctk.CTk):
         self.bind("<Control-k>", lambda _e: self.show_research())
         self.bind("<Control-o>", self._open_run_shortcut)
         self.bind("<Control-O>", lambda _e: (self.choose_attachments(), "break")[1])
+        self.bind("<Control-v>", self._paste_anywhere)
         self.bind("<Control-l>", lambda _e: self.show_assistant())
         self.bind("<Control-j>", lambda _e: self.toggle_assistant())
         self._pump_id = self.after(POLL_MS, self._pump)
@@ -136,7 +137,7 @@ class Workbench(ctk.CTk):
         session.add_command(label="Attach a file...", command=self.choose_attachments,
                             accelerator="Ctrl+Shift+O")
         session.add_command(label="Model and key...", command=self.sign_in)
-        session.add_command(label="File permissions...", command=self.show_file_permissions)
+        session.add_command(label="File access...", command=self.show_file_permissions)
         session.add_separator()
         session.add_command(label="Copy the transcript", command=self.copy_transcript)
         session.add_command(label="Open the session log", command=self.open_log)
@@ -165,28 +166,33 @@ class Workbench(ctk.CTk):
         self._app_menu = bar
 
     def show_file_permissions(self) -> None:
-        """Show the effective general-file policy without invoking a model."""
-        import json
-        from textwrap import fill
+        """Choose which folders the assistant may read and save to. No JSON editing."""
+        from continuum_spectranalytics import filesystem
+        from continuum_spectranalytics.gui.widgets import FileAccessDialog
 
-        from continuum_spectranalytics.tools import Rejected
-
+        settings = filesystem.read_policy_settings()
+        enabled = settings.get("enabled") is True
+        chosen = FileAccessDialog.put(
+            self, self.fonts, filesystem.known_folders(),
+            settings.get("read_roots", []) if enabled else [],
+            settings.get("write_roots", []) if enabled else [],
+        )
+        if chosen is None:
+            return
+        read, write = chosen
         try:
-            policy = json.loads(self.session.context.files.permissions())
-            details = (
-                "Read: " + ", ".join(policy["read_roots"]) + "\n\n"
-                "Write: " + ", ".join(policy["write_roots"]) + "\n\n"
-                "Excluded folders:\n" + fill(", ".join(policy["protected_folders"]), 85) + "\n\n"
-                "Additional exclusions: " + (", ".join(policy["denied_paths"]) or "None") + "\n\n"
-                "System and credential files (.env, Windows hives), and this policy are protected.\n\n"
-                + fill(policy["limits"], 85) + "\n\n"
-                "Existing-file replacements require a current hash and save a backup.\n"
-                "Read content is sent to your model provider and recorded in the session log.\n\n"
-                "Local settings: " + policy["policy_file"]
-            )
-        except Rejected as error:
-            details = str(error)
-        messagebox.showinfo("Agent file permissions", details, parent=self)
+            where = filesystem.save_policy(read, write)
+        except OSError as error:
+            messagebox.showerror("File access", f"Could not save the settings: {error}", parent=self)
+            return
+        self.show_assistant()
+        if read:
+            names = ", ".join(Path(r).name for r in read)
+            saving = ", ".join(Path(w).name for w in write) or "nowhere"
+            self.transcript.note(f"file access: the assistant may read {names}; save copies to {saving} "
+                                 f"(it asks each time). Saved in {where}.")
+        else:
+            self.transcript.note("file access: only files you drag in or attach are readable.")
 
     def _build_layout(self) -> None:
         from continuum_spectranalytics.gui.layout import build_layout
@@ -214,7 +220,11 @@ class Workbench(ctk.CTk):
     def choose_attachments(self) -> None:
         from tkinter import filedialog
 
-        chosen = filedialog.askopenfilenames(parent=self, title="Attach files for the assistant")
+        from continuum_spectranalytics.filesystem import known_folders
+
+        start = known_folders().get("Desktop")
+        chosen = filedialog.askopenfilenames(parent=self, title="Attach files for the assistant",
+                                             initialdir=str(start) if start else None)
         if chosen:
             self.attach_files(list(chosen))
 
@@ -251,6 +261,23 @@ class Workbench(ctk.CTk):
                                      + (f", {summary}" if summary else ""))
         self.render_attachments()
         self.entry.focus_set()
+
+    def paste_files(self, _event=None):
+        """Ctrl+V with files copied in File Explorer attaches them; text pastes as usual."""
+        from continuum_spectranalytics.gui.clipboard_files import files_on_clipboard
+
+        files = files_on_clipboard(self)
+        if not files:
+            return None
+        self.attach_files(files)
+        return "break"
+
+    def _paste_anywhere(self, event=None):
+        """Ctrl+V with no text box focused: files from Explorer still attach."""
+        focused = self.focus_get()
+        if isinstance(focused, (tk.Text, tk.Entry, ttk.Entry)):
+            return None  # the box's own <<Paste>> handles it
+        return self.paste_files(event)
 
     def render_attachments(self) -> None:
         """Chips for the files that will go with the next question."""

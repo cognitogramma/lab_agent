@@ -23,7 +23,12 @@ blocks it, contact Tulane IT.
 - **Your files.** Drag files from File Explorer onto the window, or use
   **Session > Attach a file...** (Ctrl+Shift+O). Each file shows as a chip
   above the message box and goes to the assistant with your next question.
+  You can also copy files in File Explorer and press **Ctrl+V** in the window.
   [What can be attached](docs/reference.md#attaching-files)
+- **Your folders.** In **Session > File access...**, tick Desktop, Documents
+  or Downloads to let the assistant find files there and save copies (figures,
+  CSVs) back. It asks before every save, copy, or open.
+  [File access](docs/filesystem-access.md)
 - **ARGEN data.** Press **Ctrl+O** to open a raw instrument file. The run guide
   explains what the lab needs to supply before calculating molar mass or the
   second virial coefficient.

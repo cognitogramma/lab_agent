@@ -58,7 +58,7 @@ for package in ("pypdfium2", "pypdfium2_raw", "docx", "pptx"):
 # LangChain and Google resolve some public objects on demand. tiktoken discovers plugins.
 hidden_imports = collect_submodules("langchain_core") + collect_submodules("google.genai")
 hidden_imports.append("tiktoken_ext.openai_public")
-hidden_imports += ["tkinterdnd2", "pypdfium2", "pypdfium2_raw", "docx", "pptx", "openpyxl", "xlrd", "PIL"]
+hidden_imports += ["continuum_spectranalytics.selftest", "continuum_spectranalytics.gui.clipboard_files", "tkinterdnd2", "pypdfium2", "pypdfium2_raw", "docx", "pptx", "openpyxl", "xlrd", "PIL"]
 
 analysis = Analysis(
     [str(Path(SPECPATH) / "launch.py")],
