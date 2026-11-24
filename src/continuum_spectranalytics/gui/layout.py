@@ -151,7 +151,7 @@ def build_layout(app) -> None:
                                    fg_color=P.accent, hover_color=P.accent_hover, text_color=P.accent_ink,
                                    font=(app.fonts.body[0], 14, "bold"), command=app.submit)
     app.ask_button.pack(side="right", pady=(8, 0))
-    ctk.CTkLabel(composer, text="Enter to send  ·  drag files here to attach", text_color=P.quiet, font=small_font).pack(side="left", pady=(8, 0))
+    ctk.CTkLabel(composer, text="Enter to send", text_color=P.quiet, font=small_font).pack(side="left", pady=(8, 0))
     app.transcript = Transcript(app.drawer, app.fonts)
     app.transcript.pack(fill="both", expand=True, padx=2)
     app.drawer.grid_remove()

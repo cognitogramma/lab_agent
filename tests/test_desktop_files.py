@@ -82,6 +82,7 @@ def test_saving_keeps_hand_written_exclusions(policy_file, tmp_path):
 
 def test_known_folders_finds_the_desktop(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(filesystem, "_windows_known_folder", lambda guid: None)
     (tmp_path / "Desktop").mkdir()
     assert filesystem.known_folders() == {"Desktop": (tmp_path / "Desktop").resolve()}
 
@@ -141,6 +142,46 @@ def test_copy_and_open_ask_the_researcher_first():
     assert tools["open_file"].tier == "commit"
 
 
+# --- Temp and the app's own folder, which Windows keeps under AppData ---------
+
+
+def test_files_in_temp_can_be_attached_even_under_appdata(monkeypatch, tmp_path, policy_file):
+    """Outlook attachments and files opened from a zip live in AppData\\Local\\Temp."""
+    temp = tmp_path / "Users" / "me" / "AppData" / "Local" / "Temp"
+    opened = temp / "Outlook" / "protocol.docx"
+    opened.parent.mkdir(parents=True)
+    opened.write_text("x")
+    monkeypatch.setattr(filesystem.tempfile, "gettempdir", lambda: str(temp))
+    files = FileAccess()
+    assert files.grant(opened) == opened.resolve()
+
+    secret = temp / ".ssh" / "id_rsa"
+    secret.parent.mkdir()
+    secret.write_text("key")
+    with pytest.raises(Rejected, match="protected"):
+        files.grant(secret)
+
+    elsewhere = tmp_path / "Users" / "me" / "AppData" / "Roaming" / "Browser" / "cookies.txt"
+    elsewhere.parent.mkdir(parents=True)
+    elsewhere.write_text("x")
+    with pytest.raises(Rejected, match="protected"):
+        files.grant(elsewhere)
+
+
+def test_a_figure_the_app_drew_can_be_copied_to_the_desktop(monkeypatch, tmp_path, policy_file):
+    data = tmp_path / "AppData" / "Local" / "Continuum Spectranalytics" / "data"
+    figure = data / "runs" / "figures" / "index_run12.png"
+    figure.parent.mkdir(parents=True)
+    figure.write_bytes(b"png")
+    desktop = tmp_path / "Desktop"
+    desktop.mkdir()
+    monkeypatch.setattr(filesystem, "app_data_dir", lambda: data.resolve())
+    filesystem.save_policy([desktop], [desktop])
+
+    json.loads(FileAccess().copy_file(str(figure), str(desktop)))
+    assert (desktop / "index_run12.png").read_bytes() == b"png"
+
+
 # --- pasting ------------------------------------------------------------------
 
 
@@ -148,8 +189,7 @@ def test_copy_as_path_and_file_uris_are_files(tmp_path):
     first, second = tmp_path / "My Paper.pdf", tmp_path / "data.csv"
     first.write_text("x"), second.write_text("y")
     assert paths_in_text(f'"{first}"\n"{second}"') == [str(first), str(second)]
-    uri = "file://" + str(first).replace(" ", "%20")
-    assert paths_in_text(f"copy\n{uri}") == [str(first)]
+    assert paths_in_text(f"copy\n{first.as_uri()}") == [str(first)]
 
 
 def test_ordinary_text_is_not_mistaken_for_files(tmp_path):

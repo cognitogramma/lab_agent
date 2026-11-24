@@ -187,8 +187,10 @@ def test_dropping_a_file_on_the_window_attaches_it(app, tmp_path):
 
     shelf = app.session.context.attachments
     assert [a.path for a in shelf.unsent()] == [dropped.resolve()]
+    import customtkinter as ctk
+
     chips = " ".join(str(w.cget("text")) for chip in app.attach_bar.winfo_children()
-                     for w in chip.winfo_children() if hasattr(w, "cget"))
+                     if isinstance(chip, ctk.CTkFrame) for w in chip.winfo_children())
     assert "raw trace.csv" in chips
     assert dropped.resolve() in app.session.context.files.granted
     assert json.loads(app.session.context.files.read_file(str(dropped)))["content"] == "t,ls8\n"

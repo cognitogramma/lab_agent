@@ -127,6 +127,35 @@ def save_policy(read_roots, write_roots) -> Path:
     return target
 
 
+def app_data_dir() -> Path:
+    """Where this app keeps runs, figures and notes (under AppData when installed)."""
+    return (paths.project_root() / "data").resolve()
+
+
+def exempt_folders() -> tuple[Path, ...]:
+    """Folders under AppData that are still the researcher's own files.
+
+    Windows keeps both inside AppData, which is otherwise off limits:
+    - the Temp folder, where Outlook attachments, files opened from a zip and
+      browser downloads-in-progress live while open;
+    - this app's own data folder, so a figure it drew can be copied out.
+    Protected names inside them (.ssh, .env, the policy file) are still refused.
+    """
+    folders = []
+    for candidate in (tempfile.gettempdir(), app_data_dir()):
+        try:
+            folders.append(Path(candidate).resolve())
+        except OSError:
+            continue
+    return tuple(folders)
+
+
+def _exempt_base(resolved: Path) -> Path | None:
+    """The innermost exempt folder holding this path, if any."""
+    matches = [base for base in exempt_folders() if resolved == base or base in resolved.parents]
+    return max(matches, key=lambda base: len(base.parts)) if matches else None
+
+
 MAX_COPY_BYTES = 1024 * 1024 * 1024
 # Never launched by open_file, whatever folder they are in: they run code.
 RUNNABLE_SUFFIXES = frozenset({
@@ -185,14 +214,19 @@ class FilePolicy:
             ):
                 raise Rejected("Linked paths and Windows reparse points are not allowed.")
         resolved = path.resolve()
-        lowered = {part.lower() for part in resolved.parts}
+        # Inside an exempt folder (Temp, the app's own data) only the part
+        # below it is checked against the protected folder names: the
+        # "AppData" above them is expected, anything protected inside is not.
+        exempt = _exempt_base(resolved)
+        checked_parts = resolved.relative_to(exempt).parts if exempt else resolved.parts
+        lowered = {part.lower() for part in checked_parts}
         name = resolved.name.lower()
         if (lowered & PROTECTED_PARTS or name in PROTECTED_FILES or name == ".env"
                 or name.startswith((".env.", "ntuser.dat", "usrclass.dat"))):
             raise Rejected("This system, application, credential, or permission file is protected.")
         denied = (*self.denied_paths, policy_path().resolve())
         # Cover relocated Windows installation/application directories too.
-        if os.name == "nt":
+        if os.name == "nt" and exempt is None:
             denied += tuple(Path(os.environ[k]).resolve() for k in (
                 "SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData", "LOCALAPPDATA", "APPDATA"
             ) if os.environ.get(k))
@@ -258,9 +292,13 @@ class FileAccess:
             if not self._granted:
                 return FilePolicy.load()  # raises with the explanation
             base = FilePolicy((), ())
-        if self._granted:
-            base = replace(base, read_roots=base.read_roots + tuple(self._granted))
-        return base
+        extra = tuple(self._granted)
+        # The app's own figures and runs are always readable once file access
+        # is on, so the assistant can copy or open what it drew.
+        own = app_data_dir()
+        if own not in base.read_roots:
+            extra += (own,)
+        return replace(base, read_roots=base.read_roots + extra)
 
     def permissions(self) -> str:
         policy = self.policy

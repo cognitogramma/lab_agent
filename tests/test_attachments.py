@@ -301,8 +301,18 @@ def _settle(app, seconds=0.2):
 
 
 def _chip_texts(app) -> list[str]:
+    import customtkinter as ctk
+
     return [" ".join(str(w.cget("text")) for w in chip.winfo_children())
-            for chip in app.attach_bar.winfo_children()]
+            for chip in app.attach_bar.winfo_children() if isinstance(chip, ctk.CTkFrame)]
+
+
+def test_an_empty_bar_says_how_to_attach(app):
+    import customtkinter as ctk
+
+    app.render_attachments()
+    tips = [w.cget("text") for w in app.attach_bar.winfo_children() if isinstance(w, ctk.CTkLabel)]
+    assert any("Ctrl+V" in tip for tip in tips)
 
 
 def test_dropped_files_become_chips_and_an_argen_file_offers_open_as_run(app, samples):

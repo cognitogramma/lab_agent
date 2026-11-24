@@ -111,6 +111,7 @@ class Workbench(ctk.CTk):
 
         self._build_menu()
         self._build_layout()
+        self.render_attachments()
         self._enable_file_drops()
         self._log_warnings()
 
@@ -288,7 +289,13 @@ class Workbench(ctk.CTk):
             child.destroy()
         P = theme.PALETTE
         small = (self.fonts.body[0], 12)
-        for attachment in self.session.context.attachments.unsent():
+        waiting = self.session.context.attachments.unsent()
+        if not waiting:
+            # Wraps rather than widening the panel at small window sizes.
+            ctk.CTkLabel(bar, text="Drop files here, or copy them in File Explorer and press Ctrl+V.",
+                         text_color=P.quiet, font=small, anchor="w", justify="left",
+                         wraplength=280).pack(side="top", anchor="w")
+        for attachment in waiting:
             chip = ctk.CTkFrame(bar, fg_color=P.sunken, corner_radius=10)
             chip.pack(side="top", anchor="w", pady=2)
             ctk.CTkLabel(chip, text=f"📎 {attachment.name}  ·  {attachment.label.split(' (')[0]}",
