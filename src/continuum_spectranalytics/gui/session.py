@@ -112,6 +112,9 @@ class Bridge:
         self.agent = agent
         self.surface = surface
         self.signals: "queue.Queue[Signal]" = queue.Queue()
+        if agent is not None and hasattr(agent, "on_text_delta"):
+            # Reply text as it is written, so the window shows it live.
+            agent.on_text_delta = lambda piece: self.signals.put(Signal("delta", piece))
         self._thread: threading.Thread | None = None
         self._pending: ApprovalRequest | None = None
         self._closing = threading.Event()

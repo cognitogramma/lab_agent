@@ -37,6 +37,7 @@ worked.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
@@ -277,6 +278,11 @@ class Orchestrator:
         self.messages: list[Message] = []
         # Index in ``messages`` where the current researcher question began.
         self._turn_start = 0
+        # Called with each piece of reply text as the model writes it, on the
+        # thread running the turn. The window points this at its queue.
+        self.on_text_delta: Callable[[str], None] | None = None
+        # Where the last question's time went, round by round.
+        self.last_timing: TurnTiming | None = None
         self.schemas = as_openai_tools(schemas_for(self.registry))
         # Every call attempted this session, with its outcome. The narration a
         # researcher reads is generated from this rather than authored, so what
@@ -306,7 +312,9 @@ class Orchestrator:
         really changed, reported as though the session had never started.
         """
         before = replace(self.budget.spent)
+        self.last_timing = TurnTiming(started=time.monotonic())
         yield from self._stream(user_text)
+        self.last_timing.finished = time.monotonic()
         spent = self.budget.spent
         turn_usage = Usage(
             requests=spent.requests - before.requests,
@@ -335,6 +343,7 @@ class Orchestrator:
                 yield Event("capped", str(error))
                 return
 
+            started = time.monotonic()
             try:
                 turn = self._converse()
             except ProviderCallFailed as error:
@@ -347,6 +356,10 @@ class Orchestrator:
                 return
 
             self.budget.record(turn.usage)
+            round_timing = RoundTiming(model_seconds=time.monotonic() - started, usage=turn.usage,
+                                       tools=[call.name for call in turn.tool_calls])
+            if self.last_timing is not None:
+                self.last_timing.rounds.append(round_timing)
             self.messages.append(
                 Message(role="assistant", text=turn.text, tool_calls=turn.tool_calls)
             )
@@ -357,6 +370,7 @@ class Orchestrator:
                 return
 
             results: list[ToolResult] = []
+            tools_started = time.monotonic()
             for call in turn.tool_calls:
                 if self.should_stop():
                     # Answered, not dropped. See NOT_RUN: an unanswered tool call
@@ -371,6 +385,7 @@ class Orchestrator:
                 self.trace.append((call, result))
 
             self.messages.append(Message(role="tool", results=results))
+            round_timing.tool_seconds = time.monotonic() - tools_started
             # Pages and figures read_attachment was asked to show. Not every
             # provider accepts a picture inside a tool result, so they follow
             # as a message of their own.
@@ -418,6 +433,9 @@ class Orchestrator:
         return list(self.stream(user_text))
 
     def _converse(self) -> AssistantTurn:
+        if self.on_text_delta is not None and _accepts_on_text(self.provider):
+            return self.provider.converse(self.system_prompt, self._outgoing(), self.schemas,
+                                          on_text=self.on_text_delta)
         return self.provider.converse(self.system_prompt, self._outgoing(), self.schemas)
 
     def _outgoing(self) -> list[Message]:
@@ -577,6 +595,80 @@ class Orchestrator:
             for call, result in self.trace
             if result.ok and (t := self.registry.get(call.name)) is not None and t.mutating
         ]
+
+
+@dataclass
+class RoundTiming:
+    """One model call and the tools it asked for."""
+
+    model_seconds: float
+    usage: Usage
+    tools: list[str] = field(default_factory=list)
+    tool_seconds: float = 0.0
+
+
+@dataclass
+class TurnTiming:
+    """Where one question's time went."""
+
+    started: float
+    finished: float | None = None
+    rounds: list[RoundTiming] = field(default_factory=list)
+
+    @property
+    def total(self) -> float:
+        return ((self.finished or time.monotonic()) - self.started)
+
+    @property
+    def model_seconds(self) -> float:
+        return sum(r.model_seconds for r in self.rounds)
+
+    @property
+    def tool_seconds(self) -> float:
+        return sum(r.tool_seconds for r in self.rounds)
+
+    def summary(self) -> str:
+        """One line for under the answer."""
+        tokens_in = sum(r.usage.input_tokens for r in self.rounds)
+        cached = sum(r.usage.cached_tokens for r in self.rounds)
+        out = sum(r.usage.output_tokens for r in self.rounds)
+        calls = len(self.rounds)
+        line = (f"answered in {self.total:.1f} s  ·  model {self.model_seconds:.1f} s over "
+                f"{calls} call{'s' if calls != 1 else ''}  ·  tools {self.tool_seconds:.1f} s")
+        if tokens_in:
+            line += f"  ·  {tokens_in:,} tokens in"
+            if cached:
+                line += f" ({100 * cached // tokens_in}% from cache)"
+            line += f", {out:,} out"
+        return line
+
+    def report(self) -> str:
+        """The round-by-round table behind /speed."""
+        if not self.rounds:
+            return "No model call has been made yet."
+        lines = [self.summary(), "",
+                 "round  model s  tools s  tokens in  cached  out  tools called"]
+        for number, r in enumerate(self.rounds, start=1):
+            lines.append(f"{number:>5}  {r.model_seconds:7.1f}  {r.tool_seconds:7.1f}  "
+                         f"{r.usage.input_tokens:9,}  {r.usage.cached_tokens:6,}  {r.usage.output_tokens:4,}  "
+                         + (", ".join(r.tools) or "(answer)"))
+        slowest = max(self.rounds, key=lambda r: r.model_seconds)
+        share = 100 * self.model_seconds / self.total if self.total else 0
+        lines += ["", f"The model accounts for {share:.0f}% of the time; the slowest call took "
+                      f"{slowest.model_seconds:.1f} s."]
+        if len(self.rounds) >= 4:
+            lines.append("Many rounds: a more specific question, or attaching the file, usually "
+                         "saves a few.")
+        return "\n".join(lines)
+
+
+def _accepts_on_text(provider: Any) -> bool:
+    import inspect
+
+    try:
+        return "on_text" in inspect.signature(provider.converse).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _compact(result: ToolResult) -> ToolResult:

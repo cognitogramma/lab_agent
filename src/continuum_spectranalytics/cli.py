@@ -442,6 +442,7 @@ REPL_HELP = """\
   /history          what the agent has run this session
   /attach <path>    attach a file (data, PDF, Word, PowerPoint, Excel, image)
   /attachments      list the files attached this session
+  /speed            where the last answer's time went, round by round
   /runs [query]     search past experiments directly, no model call
   /notes [query]    read notes filed in earlier sessions
   /always <tool>    pre-approve a commit tool for this session
@@ -1150,6 +1151,9 @@ def run_agent(args) -> int:
                         print("  it goes to the assistant with your next message.")
             elif command == "attachments":
                 print(context.attachments.listing())
+            elif command == "speed":
+                timing = getattr(agent, "last_timing", None) if agent else None
+                print(timing.report() if timing else "  ask a question first.")
             elif command == "runs":
                 print(registry["search_past_runs"].handler(context, {"query": rest or None}))
             elif command == "notes":

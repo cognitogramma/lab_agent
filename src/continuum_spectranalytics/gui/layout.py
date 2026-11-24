@@ -78,6 +78,9 @@ def build_layout(app) -> None:
             return
         wide = event.width / ctk.ScalingTracker.get_window_scaling(app) >= 650
         app.page_title.grid_configure(columnspan=1 if wide else 2)
+        # On its own row the box stretches to fit, so it may ask for less:
+        # at the minimum window size 240 px pushed the button past the panel.
+        app.global_query.configure(width=240 if wide else 140)
         search.grid_configure(row=0 if wide else 1, column=1 if wide else 0,
                                columnspan=1 if wide else 2, sticky="e" if wide else "ew",
                                padx=(18, 0) if wide else 0, pady=0 if wide else (10, 0))

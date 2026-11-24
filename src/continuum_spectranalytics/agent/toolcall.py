@@ -113,6 +113,23 @@ SPECS: dict[str, ProviderSpec] = {
     ),
 }
 
+# How long the model may think before each reply. Every question is several
+# model calls (decide, run a tool, decide again), so thinking time is paid on
+# every round. Left unset, GPT-5 reasons at "medium" and Gemini 3 and recent
+# Claude models think at length by default -- the main reason a session felt
+# slow. "fast" suits the tool loop: choosing which tool to call next rarely
+# needs deep reasoning, and the science is done by the deterministic tools.
+SPEEDS: dict[str, str | None] = {"fast": "low", "balanced": "medium", "thorough": "high", "default": None}
+DEFAULT_SPEED = "fast"
+
+
+def configured_speed() -> str:
+    from continuum_spectranalytics import env_setting
+
+    value = (env_setting("SPEED") or DEFAULT_SPEED).strip().lower()
+    return value if value in SPEEDS else DEFAULT_SPEED
+
+
 # Retained as names because other modules and the docs refer to them, and a
 # researcher grepping for the key they need should land somewhere.
 DEFAULT_GEMINI_MODEL = SPECS["gemini"].default_model
@@ -269,8 +286,13 @@ class LangChainToolProvider:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         on_wait: Callable[[float, str], None] | None = None,
+        fallback_client: Any = None,
     ) -> None:
         self.client = client
+        # Builds the same model without a reasoning-effort setting, for a model
+        # that rejects one (older or smaller models). Used once, then kept.
+        self.fallback_client = fallback_client
+        self.speed = "default"
         self.name = name
         self.model = model
         # Seconds to leave between requests. Zero by default: a paid key has no
@@ -281,6 +303,7 @@ class LangChainToolProvider:
         self.clock = clock
         self.on_wait = on_wait
         self._last_call: float | None = None
+        self._tools: list[dict[str, Any]] = []
 
     # --- translation ---------------------------------------------------------
 
@@ -346,7 +369,21 @@ class LangChainToolProvider:
         if waited < self.min_interval:
             self.sleep(self.min_interval - waited)
 
-    def _invoke(self, bound: Any, payload: list[Any], **kwargs: Any) -> Any:
+    def _request(self, bound: Any, payload: list[Any], on_text, kwargs: dict) -> Any:
+        """One call: streamed when someone is watching, so text shows as it is written."""
+        if on_text is None or not hasattr(bound, "stream"):
+            return bound.invoke(payload, **kwargs)
+        reply = None
+        for chunk in bound.stream(payload, **kwargs):
+            reply = chunk if reply is None else reply + chunk
+            delta = _text_of(chunk)
+            if delta:
+                on_text(delta)
+        if reply is None:
+            return bound.invoke(payload, **kwargs)
+        return reply
+
+    def _invoke(self, bound: Any, payload: list[Any], on_text=None, **kwargs: Any) -> Any:
         """One request, waiting out a rate limit rather than dying to it.
 
         This is the single exception to "the session does not retry", and it is
@@ -360,13 +397,21 @@ class LangChainToolProvider:
         A daily quota, a dead key and a bad model id are all still fatal on the
         first answer, because waiting cannot fix any of them.
         """
-        for attempt in range(self.max_rate_limit_waits + 1):
+        for attempt in range(self.max_rate_limit_waits + 2):
             self._pace()
             try:
                 self._last_call = self.clock()
-                return bound.invoke(payload, **kwargs)
+                return self._request(bound, payload, on_text, kwargs)
             except Exception as error:  # provider SDKs raise their own types
                 failure = classify_provider_error(error, self.name, self.model)
+                if self.fallback_client is not None and _rejects_effort(error):
+                    # This model takes no reasoning-effort setting. Drop it for
+                    # the rest of the session and send the same request again:
+                    # a refused request was not served, so nothing is spent twice.
+                    self.client, self.fallback_client = self.fallback_client(), None
+                    self.speed = "default"
+                    bound = self.client.bind_tools(self._tools) if self._tools else self.client
+                    continue
                 if failure.rate_limited and attempt < self.max_rate_limit_waits:
                     # The provider's own number where it gave one; otherwise a
                     # minute, which is the window these limits are measured in.
@@ -387,10 +432,12 @@ class LangChainToolProvider:
         system: str,
         messages: Sequence[Message],
         tools: Sequence[dict[str, Any]],
+        on_text: Callable[[str], None] | None = None,
     ) -> AssistantTurn:
         from langchain_core.messages import SystemMessage
 
-        bound = self.client.bind_tools(list(tools)) if tools else self.client
+        self._tools = list(tools)
+        bound = self.client.bind_tools(self._tools) if tools else self.client
         if self.name == "claude":
             # Prompt caching. Every round resends the same ~10k tokens of
             # instructions and tool definitions, plus a history that only grows.
@@ -404,10 +451,10 @@ class LangChainToolProvider:
                 content=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
             )
             payload = [system_message, *self._to_langchain(messages)]
-            reply = self._invoke(bound, payload, cache_control={"type": "ephemeral"})
+            reply = self._invoke(bound, payload, on_text, cache_control={"type": "ephemeral"})
         else:
             payload = [SystemMessage(content=system), *self._to_langchain(messages)]
-            reply = self._invoke(bound, payload)
+            reply = self._invoke(bound, payload, on_text)
 
         calls = [
             ToolCall(
@@ -425,6 +472,13 @@ class LangChainToolProvider:
         )
 
 
+def _rejects_effort(error: Exception) -> bool:
+    """Whether a provider refused the request for its reasoning-effort setting."""
+    text = str(error).lower()
+    return any(word in text for word in ("effort", "reasoning", "thinking_level", "thinking level",
+                                         "thinking is not supported", "output_config"))
+
+
 def _usage_of(reply: Any) -> Usage:
     """Read the token counts off a reply.
 
@@ -435,10 +489,12 @@ def _usage_of(reply: Any) -> Usage:
     """
     metadata = getattr(reply, "usage_metadata", None) or {}
     try:
+        details = metadata.get("input_token_details") or {}
         return Usage(
             requests=1,
             input_tokens=int(metadata.get("input_tokens") or 0),
             output_tokens=int(metadata.get("output_tokens") or 0),
+            cached_tokens=int(details.get("cache_read") or 0),
         )
     except (AttributeError, TypeError, ValueError):
         return Usage(requests=1)
@@ -668,7 +724,8 @@ def describe_providers() -> str:
     return "\n".join(rows)
 
 
-def _client_for(spec: ProviderSpec, model: str, api_key: str, temperature: float) -> Any:
+def _client_for(spec: ProviderSpec, model: str, api_key: str, temperature: float,
+                effort: str | None = None) -> Any:
     """Construct the LangChain client for one provider.
 
     All three accept the key as ``api_key`` and it is passed explicitly rather
@@ -680,15 +737,21 @@ def _client_for(spec: ProviderSpec, model: str, api_key: str, temperature: float
     if spec.name == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(model=model, temperature=temperature, api_key=api_key)
+        extra = {"reasoning_effort": effort} if effort else {}
+        return ChatGoogleGenerativeAI(model=model, temperature=temperature, api_key=api_key, **extra)
     if spec.name == "claude":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model=model, temperature=temperature, api_key=api_key)
+        extra = {"reasoning_effort": effort} if effort else {}
+        # A generous ceiling: the default can cut a long answer off mid-sentence.
+        return ChatAnthropic(model=model, temperature=temperature, api_key=api_key,
+                             max_tokens=8192, stream_usage=True, **extra)
     if spec.name == "openai":
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model=model, temperature=temperature, api_key=api_key)
+        extra = {"reasoning_effort": effort} if effort else {}
+        return ChatOpenAI(model=model, temperature=temperature, api_key=api_key,
+                          stream_usage=True, **extra)
     raise ProviderUnavailable(f"no client constructor for {spec.name!r}")
 
 
@@ -698,6 +761,7 @@ def build_provider(
     temperature: float = 0.2,
     min_interval: float = 0.0,
     on_wait: Callable[[float, str], None] | None = None,
+    speed: str | None = None,
 ) -> ToolCallingProvider:
     """Resolve a provider by name, or say exactly what is missing.
 
@@ -725,19 +789,24 @@ def build_provider(
         )
 
     name = model or os.environ.get(spec.model_env) or spec.default_model
+    speed = speed if speed in SPEEDS else configured_speed()
+    effort = SPEEDS[speed]
     try:
-        client = _client_for(spec, name, api_key, temperature)
+        client = _client_for(spec, name, api_key, temperature, effort=effort)
     except ImportError as error:  # pragma: no cover - depends on the install
         raise ProviderUnavailable(
             f"{spec.pip_name} is not installed. pip install {spec.pip_name}"
         ) from error
-    return LangChainToolProvider(
+    provider = LangChainToolProvider(
         client,
         name=spec.name,
         model=name,
         min_interval=min_interval,
         on_wait=on_wait,
+        fallback_client=(lambda: _client_for(spec, name, api_key, temperature)) if effort else None,
     )
+    provider.speed = speed
+    return provider
 
 
 def gemini_provider(model: str | None = None, temperature: float = 0.2) -> ToolCallingProvider:
@@ -786,6 +855,7 @@ class ScriptedProvider:
         system: str,
         messages: Sequence[Message],
         tools: Sequence[dict[str, Any]],
+        on_text: Callable[[str], None] | None = None,
     ) -> AssistantTurn:
         self.calls.append((system, list(messages), list(tools)))
         if not self.turns:
@@ -794,6 +864,10 @@ class ScriptedProvider:
                 "than the script provides"
             )
         turn = self.turns.pop(0)
+        if on_text is not None and turn.text:
+            # Stream the scripted text in word-sized pieces, as a real model would.
+            for piece in re.findall(r"\S+\s*|\s+", turn.text):
+                on_text(piece)
         # Filled in here so tests can write ToolCall(id="", ...) and still get
         # a well-formed pairing back.
         turn.tool_calls = [

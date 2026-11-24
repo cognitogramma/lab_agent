@@ -152,7 +152,7 @@ def test_model_pin_resolution_order(monkeypatch, kind):
     seen: list[str] = []
     monkeypatch.setattr(
         "continuum_spectranalytics.agent.toolcall._client_for",
-        lambda s, model, key, temp: seen.append(model) or FakeClient(),
+        lambda s, model, key, temp, effort=None: seen.append(model) or FakeClient(),
     )
 
     assert build_provider(kind).model == spec.default_model
@@ -169,7 +169,7 @@ def test_built_provider_carries_the_key_it_was_given(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k-only-under-the-second-name")
     captured = {}
 
-    def record(spec, model, api_key, temperature):
+    def record(spec, model, api_key, temperature, effort=None):
         captured.update(spec=spec.name, model=model, api_key=api_key)
         return FakeClient()
 
@@ -249,7 +249,7 @@ def test_there_is_no_failover_between_providers(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     attempts: list[str] = []
 
-    def record(spec, model, api_key, temperature):
+    def record(spec, model, api_key, temperature, effort=None):
         attempts.append(spec.name)
         return FakeClient(error=RuntimeError("429 quota exceeded"))
 

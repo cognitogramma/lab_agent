@@ -46,6 +46,8 @@ class Usage:
     requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    # Of input_tokens, how many the provider read from its prompt cache.
+    cached_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -56,12 +58,14 @@ class Usage:
             self.requests + other.requests,
             self.input_tokens + other.input_tokens,
             self.output_tokens + other.output_tokens,
+            self.cached_tokens + other.cached_tokens,
         )
 
     def add(self, other: "Usage") -> None:
         self.requests += other.requests
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
+        self.cached_tokens += other.cached_tokens
 
 
 @dataclass(frozen=True)

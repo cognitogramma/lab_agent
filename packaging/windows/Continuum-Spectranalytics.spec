@@ -69,14 +69,35 @@ analysis = Analysis(
     hooksconfig={"matplotlib": {"backends": ["Agg", "TkAgg"]}},
 )
 archive = PYZ(analysis.pure)
-exe = EXE(
-    archive,
-    analysis.scripts,
-    analysis.binaries,
-    analysis.datas,
-    name=name,
-    console=False,
-    upx=False,
-    icon=str(icon),
-    version=version_resource,
-)
+
+# "onefile" (default): one .exe to hand out, which unpacks itself into Temp on
+# every launch -- and Windows Defender scans what it unpacks, every launch.
+# "onedir": a folder with the .exe and its files already in place. Starts much
+# faster; hand it out as a zip. Choose with CONTINUUM_BUILD=onedir.
+import os
+
+if os.environ.get("CONTINUUM_BUILD", "onefile") == "onedir":
+    exe = EXE(
+        archive,
+        analysis.scripts,
+        [],
+        exclude_binaries=True,
+        name=name,
+        console=False,
+        upx=False,
+        icon=str(icon),
+        version=version_resource,
+    )
+    folder = COLLECT(exe, analysis.binaries, analysis.datas, name=name, upx=False)
+else:
+    exe = EXE(
+        archive,
+        analysis.scripts,
+        analysis.binaries,
+        analysis.datas,
+        name=name,
+        console=False,
+        upx=False,
+        icon=str(icon),
+        version=version_resource,
+    )

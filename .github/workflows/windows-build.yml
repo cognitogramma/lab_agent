@@ -21,7 +21,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,17 +42,68 @@ jobs:
           $run = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$report`"" -Wait -PassThru
           if (Test-Path $report) { Get-Content $report } else { Write-Host 'no report written' }
           if ($run.ExitCode -ne 0) { throw "The executable's self-test failed (exit $($run.ExitCode))." }
-      - name: Checksum
+      - name: Build the fast-start folder
+        env:
+          CONTINUUM_BUILD: onedir
+        run: python -m PyInstaller --noconfirm --distpath dist-fast --workpath build\windows-fast packaging\windows\Continuum-Spectranalytics.spec
+      - name: Self-test the fast-start folder
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'dist-fast\Continuum Spectranalytics\Continuum Spectranalytics.exe'
+          $report = Join-Path $PWD 'selftest-fast.json'
+          $run = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$report`"" -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report }
+          if ($run.ExitCode -ne 0) { throw "The fast-start build's self-test failed (exit $($run.ExitCode))." }
+      - name: Time how long each version takes to start
+        shell: pwsh
+        run: |
+          function Time-Start($exe) {
+            $times = @()
+            foreach ($i in 1..3) {
+              $clock = [Diagnostics.Stopwatch]::StartNew()
+              $run = Start-Process -FilePath $exe -ArgumentList '--startup-probe' -Wait -PassThru
+              $clock.Stop()
+              if ($run.ExitCode -ne 0) { throw "startup probe failed for $exe" }
+              $times += [math]::Round($clock.Elapsed.TotalSeconds, 1)
+            }
+            return $times
+          }
+          $one = Time-Start (Join-Path $PWD 'dist\Continuum Spectranalytics.exe')
+          $dir = Time-Start (Join-Path $PWD 'dist-fast\Continuum Spectranalytics\Continuum Spectranalytics.exe')
+          $size = [math]::Round((Get-Item 'dist\Continuum Spectranalytics.exe').Length / 1MB)
+          $lines = @(
+            '### Startup time (load the app and open Tk, then quit)',
+            '',
+            '| build | launch 1 | launch 2 | launch 3 |',
+            '| --- | --- | --- | --- |',
+            "| single .exe ($size MB) | $($one[0]) s | $($one[1]) s | $($one[2]) s |",
+            "| fast-start folder | $($dir[0]) s | $($dir[1]) s | $($dir[2]) s |"
+          )
+          $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $lines | Out-File -Encoding utf8 startup.txt
+          $lines
+      - name: Checksums and reports
         shell: pwsh
         run: |
           $hash = (Get-FileHash 'dist\Continuum Spectranalytics.exe' -Algorithm SHA256).Hash
           "$hash  Continuum Spectranalytics.exe" | Out-File -Encoding ascii dist\SHA256.txt
           Copy-Item selftest.json dist\selftest.json
-          Get-Content dist\SHA256.txt
+          Copy-Item startup.txt dist\startup.txt
+          Compress-Archive -Path 'dist-fast\Continuum Spectranalytics' -DestinationPath 'Continuum-Spectranalytics-fast-start.zip'
+          $zip = (Get-FileHash 'Continuum-Spectranalytics-fast-start.zip' -Algorithm SHA256).Hash
+          "$zip  Continuum-Spectranalytics-fast-start.zip" | Out-File -Encoding ascii SHA256-fast-start.txt
       - uses: actions/upload-artifact@v4
         with:
           name: Continuum-Spectranalytics-windows
           path: dist/*
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Continuum-Spectranalytics-windows-fast-start
+          path: |
+            Continuum-Spectranalytics-fast-start.zip
+            SHA256-fast-start.txt
+            startup.txt
           retention-days: 30
 
   tests:

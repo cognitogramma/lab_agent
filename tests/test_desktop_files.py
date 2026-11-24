@@ -39,7 +39,7 @@ def _reparse(path: Path, tag: int):
 def test_onedrive_files_are_readable(monkeypatch, tmp_path):
     synced = tmp_path / "OneDrive" / "Desktop" / "run 12.csv"
     synced.parent.mkdir(parents=True)
-    synced.write_text("t,ls8\n")
+    synced.write_bytes(b"t,ls8\n")
     monkeypatch.setattr(Path, "lstat", _reparse(synced, 0x9000701A))  # IO_REPARSE_TAG_CLOUD_7
     files = FileAccess(FilePolicy((tmp_path,), ()))
     assert json.loads(files.read_file(str(synced)))["content"] == "t,ls8\n"

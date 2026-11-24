@@ -159,6 +159,24 @@ def run() -> dict[str, dict[str, str]]:
     return results
 
 
+def startup_probe() -> int:
+    """Do what opening the window does -- load the app and start Tk -- then quit.
+
+    Timed by the Windows build, so startup is measured on every build rather
+    than guessed at. Exit code 0 on success.
+    """
+    import tkinter as tk
+
+    from continuum_spectranalytics import cli  # noqa: F401 - the real import cost
+    from continuum_spectranalytics.gui import app  # noqa: F401
+
+    root = tk.Tk()
+    root.withdraw()
+    root.update()
+    root.destroy()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     results = run()

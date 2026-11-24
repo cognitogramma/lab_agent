@@ -30,6 +30,7 @@ account, not a second account.
 from __future__ import annotations
 
 import sys
+import time
 import tkinter as tk
 import customtkinter as ctk
 from pathlib import Path
@@ -461,6 +462,9 @@ class Workbench(ctk.CTk):
                     min_interval=float(getattr(self.args, "min_request_interval", 0.0) or 0.0),
                     on_wait=self._announce_wait,
                 )
+                if announce:
+                    self.transcript.note(f"speed: {getattr(self.provider, 'speed', 'default')} "
+                                         "(Model settings to change)")
             except ProviderUnavailable as error:
                 self.transcript.block("cannot use that provider", str(error), "declined")
 
@@ -517,7 +521,10 @@ class Workbench(ctk.CTk):
 
     def _handle(self, signal: Signal) -> None:
         kind = signal.kind
-        if kind == "event":
+        if kind == "delta":
+            self.transcript.stream(signal.payload)
+            self._phase = "writing"
+        elif kind == "event":
             self._show_event(signal.payload)
         elif kind == "state":
             self.state_panel.show(signal.payload)
@@ -562,8 +569,11 @@ class Workbench(ctk.CTk):
                 self._literature_review_text = event.text
         elif kind == "call":
             arguments = dict(event.call.arguments) if event.call else {}
+            self.transcript.end_stream()
             self.transcript.action(activity(event.tool), hint(arguments))
+            self._phase = activity(event.tool)
         elif kind == "result":
+            self._phase = "thinking"
             if event.tool in {"search_internet", "review_literature"}:
                 if self.research_panel.show_results(event.text):
                     self.tabs.select(self.research_panel)
@@ -621,7 +631,12 @@ class Workbench(ctk.CTk):
             self.hide_assistant()
         if outcome == "dead":
             self.dead = True
+        self.transcript.end_stream()
         self._busy(False)
+        timing = getattr(self.agent, "last_timing", None)
+        if timing is not None and timing.rounds:
+            self.transcript.note(timing.summary())
+            self.log.write("speed", timing.report())
         self._refresh_status()
         self.state_panel.show(self._render_state())
         self.research_panel.refresh_context()
@@ -687,6 +702,18 @@ class Workbench(ctk.CTk):
         # The orchestrator takes them when the turn starts, on the worker.
         self.after(250, self.render_attachments)
 
+    def _tick_activity(self) -> None:
+        """A live clock and what the assistant is doing, while a question runs."""
+        if not self.bridge.busy and getattr(self, "_working_since", None) is None:
+            return
+        since = getattr(self, "_working_since", None)
+        if since is None:
+            return
+        elapsed = time.monotonic() - since
+        phase = getattr(self, "_phase", "thinking")
+        self.activity_label.configure(text=f"{phase[:1].upper()}{phase[1:]}…  {elapsed:.0f} s")
+        self._activity_tick = self.after(500, self._tick_activity)
+
     def _busy(self, working: bool) -> None:
         """One button, two jobs.
 
@@ -696,7 +723,10 @@ class Workbench(ctk.CTk):
         """
         if working:
             self.show_assistant()
-            self.activity_label.configure(text="Working…")
+            self.activity_label.configure(text="Thinking…")
+            self._phase = "thinking"
+            self._working_since = time.monotonic()
+            self._tick_activity()
             self.ask_button.configure(
                 text="Stop", fg_color=theme.PALETTE.commit, text_color=theme.PALETTE.accent_ink,
                 hover_color="#DCA34C", command=self.stop, state="normal"
@@ -705,6 +735,11 @@ class Workbench(ctk.CTk):
             self.progress.pack(side="right", padx=(0, 14))
             self.progress.start(14)
         else:
+            self._working_since = None
+            tick = getattr(self, "_activity_tick", None)
+            if tick is not None:
+                self.after_cancel(tick)
+                self._activity_tick = None
             self.activity_label.configure(text="Ready" if not self.dead else "Provider unavailable")
             self.ask_button.configure(
                 text="Ask", fg_color=theme.PALETTE.accent, text_color=theme.PALETTE.accent_ink,
@@ -746,6 +781,7 @@ class Workbench(ctk.CTk):
 /tools             every tool the agent can call
 /history           what the agent has run this session
 /attach [path]     attach a file for the assistant (or drag it onto the window)
+/speed             where the last answer's time went, round by round
 /runs [query]      search past experiments, no model call
 /notes [query]     read notes filed in earlier sessions
 /search [query]    find sources and lab memory in Literature
@@ -769,6 +805,11 @@ class Workbench(ctk.CTk):
             self.tabs.select(self.tools_panel)
         elif command == "history":
             self.show_history()
+        elif command == "speed":
+            timing = getattr(self.agent, "last_timing", None)
+            self.show_assistant()
+            self.transcript.output(timing.report() if timing else "Ask a question first; then /speed "
+                                   "shows where its time went.")
         elif command == "attach":
             target = rest.strip().strip('"').strip("'")
             if target:
@@ -872,7 +913,7 @@ class Workbench(ctk.CTk):
         chosen = SignInDialog.put(self, self.fonts, SPECS, keyed_providers(), current)
         if chosen is None:
             return
-        kind, value, save, model = chosen
+        kind, value, save, model, speed = chosen
         spec = SPECS[kind]
         import os
 
@@ -883,8 +924,10 @@ class Workbench(ctk.CTk):
                     f"key written to {paths.env_file()} as {spec.canonical_key}. It is gitignored."
                 )
         os.environ[spec.model_env] = model
+        os.environ["CONTINUUM_SPECTRANALYTICS_SPEED"] = speed
         if save:
             _persist_setting(spec.model_env, model)
+            _persist_setting("CONTINUUM_SPECTRANALYTICS_SPEED", speed)
         self.args.provider = kind
         self.args.model = model
         self._connect(announce=True)
@@ -1015,7 +1058,7 @@ class Workbench(ctk.CTk):
         self.run_label.configure(text=("Review literature. Keep your research ideas." if source == "none"
                                        else f"{self.session.run_id}  /  {source}"))
         if self.provider is not None:
-            brain = f"{self.provider.name} / {self.provider.model}"
+            brain = f"{self.provider.name} / {self.provider.model} · {getattr(self.provider, 'speed', 'default')}"
         else:
             brain = "no model keyed"
         approval = "auto-approve" if self.args.auto_approve else "changes need approval"

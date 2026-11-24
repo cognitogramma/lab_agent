@@ -301,6 +301,30 @@ class Transcript(ttk.Frame):
     def you(self, text: str) -> None:
         self._write([(text.strip() + "\n", "you")])
 
+    def stream(self, piece: str) -> None:
+        """Reply text as the model writes it: plain now, rendered when complete."""
+        at_end = self.text.yview()[1] > 0.999
+        self.text.configure(state="normal")
+        if "live" not in self.text.mark_names():
+            self.text.mark_set("live", "end-1c")
+            self.text.mark_gravity("live", "left")
+        self.text.insert("end", piece, ("model",))
+        self.text.configure(state="disabled")
+        if at_end:
+            self.text.see("end")
+
+    def end_stream(self, keep: bool = True) -> None:
+        """Forget the live region; drop its plain text unless ``keep``."""
+        if "live" not in self.text.mark_names():
+            return
+        if not keep:
+            self.text.configure(state="normal")
+            self.text.delete("live", "end-1c")
+            self.text.configure(state="disabled")
+        else:
+            self._write([("\n", "model")])
+        self.text.mark_unset("live")
+
     def model(self, text: str) -> None:
         """The model's reply, with its markdown rendered rather than displayed.
 
@@ -321,6 +345,8 @@ class Transcript(ttk.Frame):
         renderer that italicised the middle of a declaration key would corrupt
         the one kind of word that has to survive verbatim.
         """
+        # The streamed draft of this reply is replaced by its rendered form.
+        self.end_stream(keep=False)
         chunks: list[tuple[str, str | tuple[str, ...]]] = []
         for raw in str(text).strip().splitlines():
             stripped = raw.strip()
@@ -931,8 +957,8 @@ class SignInDialog(tk.Toplevel):
     def __init__(self, parent, fonts: Fonts, specs: dict, keyed: Sequence[str],
                  current: tuple[str, str] | None = None) -> None:
         super().__init__(parent)
-        # (provider, key or "" to keep the saved one, save to .env, model id)
-        self.result: tuple[str, str, bool, str] | None = None
+        # (provider, key or "" to keep the saved one, save to .env, model id, speed)
+        self.result: tuple[str, str, bool, str, str] | None = None
         self.keyed = set(keyed)
         self.current = current
         p = PALETTE
@@ -979,6 +1005,21 @@ class SignInDialog(tk.Toplevel):
         self.model = tk.StringVar()
         self.model_box = ttk.Combobox(wrap, textvariable=self.model, font=fonts.mono, width=50)
         self.model_box.pack(fill="x", pady=(2, 0))
+
+        from continuum_spectranalytics.agent.toolcall import configured_speed
+
+        speed_row = tk.Frame(wrap, background=p.panel)
+        speed_row.pack(fill="x", pady=(10, 0))
+        tk.Label(speed_row, text="Speed", font=fonts.small, background=p.panel,
+                 foreground=p.quiet, width=8, anchor="w").pack(side="left")
+        self.speed = tk.StringVar(value=configured_speed() if configured_speed() != "default" else "fast")
+        for value, label in (("fast", "Fast"), ("balanced", "Balanced"), ("thorough", "Thorough")):
+            ttk.Radiobutton(speed_row, text=label, value=value, variable=self.speed).pack(side="left", padx=(0, 8))
+        tk.Label(
+            wrap, text="How long the model thinks before each step. Fast answers in seconds and suits\n"
+                       "most questions; Thorough is for hard reasoning and can take a minute.",
+            font=fonts.small, background=p.panel, foreground=p.faint, anchor="w", justify="left",
+        ).pack(fill="x", pady=(2, 0))
 
         self.where = tk.Label(
             wrap, text="", font=fonts.small, background=p.panel,
@@ -1046,7 +1087,7 @@ class SignInDialog(tk.Toplevel):
         if not value and name not in self.keyed:
             self.key_hint.configure(text=f"{name} needs an API key before it can be used")
             return
-        self.result = (name, value, bool(self.save.get()), model)
+        self.result = (name, value, bool(self.save.get()), model, self.speed.get())
         self.destroy()
 
     def _skip(self) -> None:

@@ -168,6 +168,9 @@ def _settle(app, seconds=0.2):
 @pytest.fixture
 def app(gui_app, no_policy):
     yield gui_app
+    for attachment in gui_app.session.context.attachments:
+        gui_app.session.context.attachments.remove(attachment.id)
+    gui_app.render_attachments()
     gui_app.entry.delete("1.0", "end")
     gui_app.transcript.clear()
 
@@ -177,7 +180,7 @@ def test_dropping_a_file_on_the_window_attaches_it(app, tmp_path):
     assert app.drops_enabled, "tkdnd should load wherever tkinterdnd2 is installed"
     dropped = tmp_path / "Run 12" / "raw trace.csv"
     dropped.parent.mkdir()
-    dropped.write_text("t,ls8\n")
+    dropped.write_bytes(b"t,ls8\n")
 
     # Run the exact script tkdnd runs on a drop, with Tk's brace quoting for spaces.
     script = app.tk.call("bind", app.entry._w, "<<Drop>>")
@@ -219,7 +222,7 @@ def test_model_settings_returns_the_chosen_model(app, monkeypatch):
     assert dialog.model.get() == SPECS["claude"].default_model
     dialog.model.set("claude-haiku-5-5")
     dialog._accept()  # no key typed: the saved one is kept
-    assert dialog.result == ("claude", "", False, "claude-haiku-5-5")
+    assert dialog.result == ("claude", "", False, "claude-haiku-5-5", "fast")
 
 
 def test_model_settings_needs_a_key_for_an_unkeyed_provider(app):
